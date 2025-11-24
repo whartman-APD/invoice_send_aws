@@ -200,6 +200,7 @@ class QuickBooksOnline:
         except requests.exceptions.HTTPError as e:
             error_detail = e.response.text if e.response else str(e)
             logger.error(f"Token refresh failed: {error_detail}")
+            logger.error(f"Full error response: {e.response.text}")  # Add this
             raise QBOAuthError(f"Failed to refresh token: {error_detail}") from e
         except requests.exceptions.RequestException as e:
             logger.error(f"Token refresh request failed: {e}")
