@@ -16,7 +16,7 @@ Resources:
     Properties:
       CodeUri: hello_world/
       Handler: app.lambda_handler
-      Runtime: python3.12
+      Runtime: python3.11
       Timeout: 120        # ← add this (or higher if needed)
       Architectures:
         - x86_64
