@@ -1,4 +1,5 @@
 from datetime import datetime
+from xmlrpc import client
 import apd_quickbooksonline as quickbooks_online
 import apd_msgraph_v2 as msgraph
 import pandas
@@ -21,9 +22,15 @@ def send_qbo_invoices():
     # Get secrets and intialize instances
     msgraph_vault = get_secrets("MSGRAPH_SECRET_NAME")
     quickbooks_online_vault = get_secrets("QBO_SECRET_NAME")
-    return
-    msgraph_instance = msgraph.MsGraph()
+    msgraph_instance = msgraph.MsGraph(
+        tenant=msgraph_vault["tenant_id"],
+        client_id=msgraph_vault["client_id"],
+        client_secret=msgraph_vault["client_secret_value"],
+    )
     quickbooks_online_instance = quickbooks_online.QuickBooksOnline(quickbooks_online_vault)
+    
+    # Write tokens back to secrets manager
+    update_secret("QBO_SECRET_NAME", quickbooks_online_instance.vault_values)
 
     # Get invoices for today
     query = f"select * from Invoice where TxnDate = '{current_date}'"
@@ -31,7 +38,7 @@ def send_qbo_invoices():
     if invoices['QueryResponse'].get('Invoice') is None:
         print("No invoices found for today.")
         return
-
+    
     # Loop through invoices and send them
     for invoice in invoices['QueryResponse']['Invoice']:
         invoice_row = {
@@ -49,7 +56,7 @@ def send_qbo_invoices():
             continue
         else:
             try:
-                invoice_send_response = quickbooks_online_instance.send_invoice(invoice['Id'])
+                quickbooks_online_instance.send_invoice(invoice['Id'])
                 invoice_row["Status"] = "Sent"
             except Exception as e:
                 print(e)
@@ -67,13 +74,17 @@ def send_qbo_invoices():
     }
 
     # Setup email template from APD resource, email address to use, and email payload
+    send_email(email_path, bookeeper_email, msgraph_instance, data_to_email)
+
+def send_email(email_path: str, bookeeper_email: str, msgraph_instance: msgraph.MsGraph, data_to_email: dict[str, str]):
+    print("Preparing and sending email...")
     template = apd_common.APD_Html_Template(email_path, data_to_email)
     email_to_recipients = []
     email_to_recipients.append({"emailAddress": {"address": bookeeper_email}})
     bcc_recipients = []
     email_payload = {
         "message": {
-            "subject": f"Invoices Sent Today",
+            "subject": "Invoices Sent Today",
             "body": {
                 "contentType": "HTML",
                 "content": template.template_content
@@ -87,12 +98,24 @@ def send_qbo_invoices():
     # Send email and handle response using msgraph
     issues, response = msgraph_instance.send_email(email_payload, alternate_email_username_for_sending="robotarmy@automatapracdev.com")
 
-def get_secrets(secret_name: str) -> dict[str, str]:
-    secret_name = os.environ[secret_name]
-    region_name = os.environ["AWS_REGION"]
+def get_secrets(secret_name_env: str) -> dict[str, str]:
+    secret_name = os.environ[secret_name_env]
+    region_name = "us-west-2"
     sm = boto3.client("secretsmanager", region_name=region_name)
     secret_value = sm.get_secret_value(SecretId=secret_name)
     return json.loads(secret_value["SecretString"])
 
+# Add this method to the QuickBooksOnline class
+def update_secret(secret_name_env: str, secret_values: dict[str, str]) -> None:
+    """Update the secret in AWS Secrets Manager with current vault values."""
+    secret_name = os.environ[secret_name_env]
+    region_name = "us-west-2"
+    sm = boto3.client("secretsmanager", region_name=region_name)
+    sm.update_secret(
+        SecretId=secret_name,
+        SecretString=json.dumps(secret_values)
+    )
+
+    
 if __name__ == "__main__":
     send_qbo_invoices()
