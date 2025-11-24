@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 BASE_URL = "https://graph.microsoft.com/v1.0"
 
 class MsGraph:
-    def __init__(self, client_id:str, client_secret:str, tenant:str, username:str, sharepoint_hostname:str):
+    def __init__(self, client_id:str, client_secret:str, tenant:str):
         """
         # `MsGraph` Class
         A class for interacting with the Microsoft Graph API.
@@ -21,8 +21,6 @@ class MsGraph:
             "tenant": tenant,
             "client_id": client_id,
             "client_secret_value": client_secret,
-            "username": username,
-            "SharepointHostName": sharepoint_hostname
         }
         self.access_token = self.request_access_token()
 
