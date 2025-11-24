@@ -32,7 +32,7 @@ def lambda_handler(event, context):
     #     print(e)
 
     #     raise e
-    result = send_qbo_invoices()
+    send_qbo_invoices()
     return {
         "statusCode": "200",
         "body": json.dumps({"ok": True})
