@@ -17,6 +17,9 @@ Globals:
       Variables:
         QBO_SECRET_NAME: 10000/QBO
         MSGRAPH_SECRET_NAME: 10000/MsGraph
+        BOOKKEEPER_EMAIL: whartman@automatapracdev.com
+        EXCLUDED_CUSTOMERS: "10001 - AICPA"
+        SENDER_EMAIL: robotarmy@automatapracdev.com
 
 Resources:
   # Lambda function to send daily invoices
