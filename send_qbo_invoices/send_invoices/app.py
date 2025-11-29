@@ -6,7 +6,7 @@ import os
 # Add shared directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared'))
 
-from process_and_send_qbo_invoices import send_qbo_invoices
+from shared.process_and_send_qbo_invoices import send_qbo_invoices
 
 
 def lambda_handler(event: dict[str, Any], context: object):
@@ -31,7 +31,7 @@ def lambda_handler(event: dict[str, Any], context: object):
         API Gateway Lambda Proxy Output Format with statusCode 200 and success indicator
         Return doc: https://docs.aws.amazon.com/apigateway/latest/developerguide/set-up-lambda-proxy-integrations.html
     """
-    send_qbo_invoices()
+    success = send_qbo_invoices()
     return {
         "statusCode": 200,
         "body": json.dumps({"ok": True, "message": "Invoices processed and sent successfully"})
