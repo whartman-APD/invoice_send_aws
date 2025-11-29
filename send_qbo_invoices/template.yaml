@@ -1,46 +1,103 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  send_qbo_invoices
+  QuickBooks Online Invoice Automation
 
-  Sample SAM Template for send_qbo_invoices
+  SAM application with two Lambda functions:
+  1. SendInvoicesFunction - Sends today's invoices daily
+  2. CreateInvoicesFunction - Creates monthly invoices from recurring transactions
 
-# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
 Globals:
   Function:
-    Timeout: 3
+    Timeout: 120
+    Runtime: python3.11
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        QBO_SECRET_NAME: 10000/QBO
+        MSGRAPH_SECRET_NAME: 10000/MsGraph
 
 Resources:
-  HelloWorldFunction:
-    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+  # Lambda function to send daily invoices
+  SendInvoicesFunction:
+    Type: AWS::Serverless::Function
     Properties:
-      CodeUri: hello_world/
-      Handler: app.lambda_handler
-      Runtime: python3.11
-      Timeout: 120        # ← add this (or higher if needed)
-      Architectures:
-        - x86_64
-      Environment:
-        Variables:
-          QBO_SECRET_NAME: 10000/QBO
-          MSGRAPH_SECRET_NAME: 10000/MsGraph
+      CodeUri: .
+      Handler: send_invoices.app.lambda_handler
+      Description: Sends QuickBooks Online invoices created today and emails summary
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+                - secretsmanager:UpdateSecret
+              Resource:
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:10000/QBO*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:10000/MsGraph*"
       Events:
-        HelloWorld:
-          Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+        # Daily schedule - runs at 5 PM Pacific (1 AM UTC next day)
+        DailySchedule:
+          Type: Schedule
           Properties:
-            Path: /hello
-            Method: get
+            Schedule: cron(0 12 * * ? *)
+            Description: Run daily at 5 AM Pacific to send today's invoices
+            Enabled: false  # Set to true when ready to activate
+        # API Gateway endpoint for manual triggering
+        ManualTrigger:
+          Type: Api
+          Properties:
+            Path: /send-invoices
+            Method: post
+
+  # Lambda function to create monthly invoices
+  CreateInvoicesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: create_invoices.app.lambda_handler
+      Description: Creates QuickBooks Online invoices from recurring transactions monthly
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+                - secretsmanager:UpdateSecret
+              Resource:
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:10000/QBO*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:10000/MsGraph*"
+      Events:
+        # Monthly schedule - runs on 4th of each month at 9 AM Pacific (5 PM UTC)
+        MonthlySchedule:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 17 4 * ? *)
+            Description: Run on 4th of each month at 9 AM Pacific to create invoices
+            Enabled: false  # Set to true when implementation is complete
+        # API Gateway endpoint for manual triggering
+        ManualTrigger:
+          Type: Api
+          Properties:
+            Path: /create-invoices
+            Method: post
 
 Outputs:
-  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
-  # Find out more about other implicit resources you can reference within SAM
-  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
-  HelloWorldApi:
-    Description: "API Gateway endpoint URL for Prod stage for Hello World function"
-    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/hello/"
-  HelloWorldFunction:
-    Description: "Hello World Lambda Function ARN"
-    Value: !GetAtt HelloWorldFunction.Arn
-  HelloWorldFunctionIamRole:
-    Description: "Implicit IAM Role created for Hello World function"
-    Value: !GetAtt HelloWorldFunctionRole.Arn
+  SendInvoicesFunctionArn:
+    Description: "Send Invoices Lambda Function ARN"
+    Value: !GetAtt SendInvoicesFunction.Arn
+
+  CreateInvoicesFunctionArn:
+    Description: "Create Invoices Lambda Function ARN"
+    Value: !GetAtt CreateInvoicesFunction.Arn
+
+  ApiEndpoint:
+    Description: "API Gateway endpoint URL for manual triggering"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
+
+  SendInvoicesManualUrl:
+    Description: "POST to this URL to manually trigger invoice sending"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/send-invoices"
+
+  CreateInvoicesManualUrl:
+    Description: "POST to this URL to manually trigger invoice creation"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/create-invoices"

@@ -1,5 +1,10 @@
 import json
 from typing import Any
+import sys
+import os
+
+# Add shared directory to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared'))
 
 from process_and_send_qbo_invoices import send_qbo_invoices
 
@@ -13,7 +18,7 @@ def lambda_handler(event: dict[str, Any], context: object):
     Parameters
     ----------
     event: dict, required
-        API Gateway Lambda Proxy Input Format
+        API Gateway Lambda Proxy Input Format or EventBridge schedule event
         Event doc: https://docs.aws.amazon.com/apigateway/latest/developerguide/set-up-lambda-proxy-integrations.html#api-gateway-simple-proxy-for-lambda-input-format
 
     context: object, required
@@ -28,7 +33,6 @@ def lambda_handler(event: dict[str, Any], context: object):
     """
     send_qbo_invoices()
     return {
-        "statusCode": "200",
-        "body": json.dumps({"ok": True})
+        "statusCode": 200,
+        "body": json.dumps({"ok": True, "message": "Invoices processed and sent successfully"})
     }
-
