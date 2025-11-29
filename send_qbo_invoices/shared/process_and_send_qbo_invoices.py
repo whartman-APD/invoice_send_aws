@@ -1,5 +1,6 @@
 from datetime import datetime
 import logging
+from typing import Any
 import apd_quickbooksonline as quickbooks_online
 import apd_msgraph_v2 as msgraph
 import pandas
@@ -9,31 +10,38 @@ import os
 import json
 
 def send_qbo_invoices() -> bool:
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
     
-    # Email variables
     # Path to assets folder (Lambda runs from function directory, assets is at parent level)
     email_path = os.path.join(os.path.dirname(__file__), '..', 'assets', 'sent_invoices_email_template.html')
+    aws_region = os.environ.get("AWS_REGION", "us-west-2")
+    excluded_customers = [customer.strip() for customer in os.environ.get("EXCLUDED_CUSTOMERS", "").split(",") if customer.strip()]
     bookkeeper_email = os.environ.get("BOOKKEEPER_EMAIL", "whartman@automatapracdev.com")
     sender_email = os.environ.get("SENDER_EMAIL", "robotarmy@automatapracdev.com")
-    excluded_customers = os.environ.get("EXCLUDED_CUSTOMERS", "").split(",")
-    aws_region = os.environ.get("AWS_REGION", "us-west-2")
-    
+    if not bookkeeper_email or not sender_email:
+        logging.error("BOOKKEEPER_EMAIL and SENDER_EMAIL must be set")
+        return False
+
     # Data variables
     current_date = datetime.now().strftime("%Y-%m-%d")
-    column_names = ["Id", "Invoice Num", "Name", "Invoice Date", "Invoice Due", "Amount", "Status"]
-    invoices_dataframe = pandas.DataFrame(columns=column_names)
     logging.info("Starting invoice send process...")
     
     # Get secrets and intialize instances
-    aws_secretsmanager = boto3.client("secretsmanager", region_name=aws_region)
-    msgraph_vault = get_secrets("MSGRAPH_SECRET_NAME", aws_secretsmanager)
-    quickbooks_online_vault = get_secrets("QBO_SECRET_NAME", aws_secretsmanager)
-    msgraph_instance = msgraph.MsGraph(
-        tenant=msgraph_vault["tenant_id"],
-        client_id=msgraph_vault["client_id"],
-        client_secret=msgraph_vault["client_secret_value"],
-    )
-    quickbooks_online_instance = quickbooks_online.QuickBooksOnline(quickbooks_online_vault)
+    try:
+        aws_secretsmanager = boto3.client("secretsmanager", region_name=aws_region)
+        msgraph_vault = get_secrets("MSGRAPH_SECRET_NAME", aws_secretsmanager)
+        quickbooks_online_vault = get_secrets("QBO_SECRET_NAME", aws_secretsmanager)
+        msgraph_instance = msgraph.MsGraph(
+            tenant=msgraph_vault["tenant_id"],
+            client_id=msgraph_vault["client_id"],
+            client_secret=msgraph_vault["client_secret_value"],
+        )
+        quickbooks_online_instance = quickbooks_online.QuickBooksOnline(quickbooks_online_vault)
+    except Exception as e:
+        logging.error(f"Failed to initialize instances: {e}")
+        return False
 
     # Write tokens back to secrets manager
     update_secret("QBO_SECRET_NAME", quickbooks_online_instance.vault_values, aws_secretsmanager)
@@ -49,12 +57,12 @@ def send_qbo_invoices() -> bool:
     invoice_rows = []
     for invoice in invoices['QueryResponse']['Invoice']:
         invoice_row = {
-            "Id": invoice['Id'],
-            "Invoice Num": invoice['DocNumber'],
-            "Name": invoice['CustomerRef']['name'],
-            "Invoice Date": invoice['TxnDate'],
-            "Invoice Due": invoice['DueDate'],
-            "Amount": invoice['TotalAmt'], 
+            "Id": invoice.get('Id', 'N/A'),
+            "Invoice Num": invoice.get('DocNumber', 'N/A'),
+            "Name": invoice.get('CustomerRef', {}).get('name', 'Unknown'),
+            "Invoice Date": invoice.get('TxnDate', ''),
+            "Invoice Due": invoice.get('DueDate', ''),
+            "Amount": invoice.get('TotalAmt', 0),
             "Status": "Not Sent"
         }
         if invoice_row['Amount'] == 0:
@@ -89,8 +97,7 @@ def send_qbo_invoices() -> bool:
 def send_email(email_path: str, bookkeeper_email: str, sender_email: str, msgraph_instance: msgraph.MsGraph, data_to_email: dict[str, str]) -> bool:
     logging.info("Preparing and sending email...")
     template = apd_common.APD_Html_Template(email_path, data_to_email)
-    email_to_recipients = []
-    email_to_recipients.append({"emailAddress": {"address": bookkeeper_email}})
+    email_to_recipients = [{"emailAddress": {"address": bookkeeper_email}}]
     bcc_recipients = []
     email_payload = {
         "message": {
@@ -114,13 +121,13 @@ def send_email(email_path: str, bookkeeper_email: str, sender_email: str, msgrap
         logging.info("Email sent successfully.")
         return True
 
-def get_secrets(secret_name_env: str, aws_secretsmanager: boto3.client) -> dict[str, str]:
+def get_secrets(secret_name_env: str, aws_secretsmanager: Any) -> dict[str, str]:
+    """Retrieve the secret from AWS Secrets Manager."""
     secret_name = os.environ[secret_name_env]
     secret_value = aws_secretsmanager.get_secret_value(SecretId=secret_name)
     return json.loads(secret_value["SecretString"])
 
-# Add this method to the QuickBooksOnline class
-def update_secret(secret_name_env: str, secret_values: dict[str, str], aws_secretsmanager: boto3.client) -> None:
+def update_secret(secret_name_env: str, secret_values: dict[str, str], aws_secretsmanager: Any) -> None:
     """Update the secret in AWS Secrets Manager with current vault values."""
     secret_name = os.environ[secret_name_env]
     aws_secretsmanager.update_secret(
