@@ -32,7 +32,13 @@ def lambda_handler(event: dict[str, Any], context: object):
         Return doc: https://docs.aws.amazon.com/apigateway/latest/developerguide/set-up-lambda-proxy-integrations.html
     """
     success = send_qbo_invoices()
-    return {
-        "statusCode": 200,
-        "body": json.dumps({"ok": True, "message": "Invoices processed and sent successfully"})
-    }
+    if success:
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"ok": True, "message": "Invoices processed and sent successfully"})
+        }
+    else:
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"ok": False, "message": "Failed to process invoices"})
+        }
