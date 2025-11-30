@@ -1,15 +1,11 @@
-from robocorp.tasks import task, get_output_dir
+import logging
 import math
+import os
 import time
 import json
-from resources import apd_clickup as clickup
-from resources import apd_robocorp as robocorp
 from datetime import datetime, timezone
-from robocorp import vault
 import requests
 import pandas
-from resources import apd_quickbooksonline as quickbooks_online
-from resources import apd_msgraph_v2 as msgraph
 from dateutil.relativedelta import relativedelta
 import io
 import ast
@@ -21,14 +17,17 @@ from openpyxl.styles import Font, Border, Side
 from datetime import datetime
 from openpyxl.utils.dataframe import dataframe_to_rows
 from fpdf import FPDF
+import apd_quickbooksonline as quickbooks_online
+import apd_msgraph_v2 as msgraph
+import apd_clickup as clickup
+import boto3
+import apd_common
+from dataclasses import dataclass
 
-# +++++++++++++++++++++++++++++++++
-# After running, you can download all the attachments to check that they attached correctly in QBO
-
+# Configuration
 UPLOAD_TO_SHAREPOINT = True
 CREATE_INVOICE = True
 UPDATE_CLICKUP = True
-OUTPUT_DIR = get_output_dir()
 LOWER_CLIENT_ID = 10022 # Include this client ID
 UPPER_CLIENT_ID = 10025 # Exclude this client ID
 
@@ -39,43 +38,80 @@ APD_CLIENT_ID = "10000"
 SUB_FOLDER_NAME = "Minutes"
 BASE_PATH = f"10000 - Automata Practice Development/{SUB_FOLDER_NAME}"
 
-# Configure the billing period here
-BILLING_START_DATE_PRIOR_PERIOD = datetime(2025, 9, 1, 0, 0, 0, tzinfo=timezone.utc)
-BILLING_END_DATE_PRIOR_PERIOD = datetime(2025, 9, 30, 23, 59, 59, tzinfo=timezone.utc)
-BILLING_START_DATE_CURRENT_PERIOD = datetime(2025, 10, 1, 0, 0, 0, tzinfo=timezone.utc)
-BILLING_END_DATE_CURRENT_PERIOD = datetime(2025, 10, 31, 23, 59, 59, tzinfo=timezone.utc)
-SHAREPOINT_FILE_DATE = '2025-9'    # 0 based index for month, so 0 is January, 1 is February, etc.
+@dataclass
+class BillingPeriodConfig:
+    """Configuration for billing periods."""
+    reference_date: datetime
+    
+    @property
+    def current_period_start(self) -> datetime:
+        return self.reference_date
+    
+    @property
+    def current_period_end(self) -> datetime:
+        return (self.reference_date + relativedelta(months=1, days=-1)).replace(
+            hour=23, minute=59, second=59
+        )
+    
+    @property
+    def prior_period_start(self) -> datetime:
+        return self.reference_date - relativedelta(months=1)
+    
+    @property
+    def prior_period_end(self) -> datetime:
+        return (self.reference_date - relativedelta(days=1)).replace(
+            hour=23, minute=59, second=59
+        )
+    
+    @property
+    def sharepoint_file_date(self) -> str:
+        """Format: YYYY-M (e.g., '2025-9')"""
+        return self.prior_period_start.strftime("%Y-%-m" if os.name != "nt" else "%Y-%#m")
 
+# Initialize billing configuration
+BILLING_CONFIG = BillingPeriodConfig(
+    reference_date=datetime(2025, 10, 1, tzinfo=timezone.utc)
+)
 
 def process_all_clients():
-    APD_CLIENT_ID = "10000"
-
+    # Configure logging for Lambda/local execution
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(levelname)s: %(message)s',
+        force=True  # Force reconfiguration even if already configured
+    )
+    logging.info("Starting task minutes to ClickUp and QBO process...")
+    
+    aws_region = os.environ.get("AWS_REGION", "us-west-2")
     # Get the secrets from the vault
-    clickup_vault = vault.get_secret("ClickUp")
-    robocorp_vault = vault.get_secret("Robocorp_Client_API_Keys")
-    quickbooks_online_vault = vault.get_secret("QBO")
-    msgraph_instance = msgraph.MsGraph(APD_CLIENT_ID)
+    try:
+        aws_secretsmanager = boto3.client("secretsmanager", region_name=aws_region)
+        msgraph_vault = apd_common.get_secrets("MSGRAPH_SECRET_NAME", aws_secretsmanager)
+        quickbooks_online_vault = apd_common.get_secrets("QBO_SECRET_NAME", aws_secretsmanager)
+        clickup_vault = apd_common.get_secrets("CLICKUP_SECRET_NAME", aws_secretsmanager)
+        msgraph_instance = msgraph.MsGraph(
+                tenant=msgraph_vault["tenant_id"],
+                client_id=msgraph_vault["client_id"],
+                client_secret=msgraph_vault["client_secret_value"],
+            )
+        aws_dynamodb = boto3.resource('dynamodb', region_name=aws_region)
+        client_orgs_table = apd_common.get_dynamodb_table("DYNAMODB_TABLE_ROBOCORP_CLIENTS", aws_dynamodb)
+    except Exception as e:
+        logging.error(f"Failed to initialize instances: {e}")
+        return False
 
-    # # Get the first and last day of the prior month in UTC
-    # today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    # first_day_of_current_month = today.replace(day=1)
-    # last_day_of_prior_month = first_day_of_current_month - pandas.DateOffset(nanoseconds=1)
-    # first_day_of_prior_month = last_day_of_prior_month.replace(day=1)
-    # prior_month_str = last_day_of_prior_month.strftime("%Y-%m")
+    for item in client_orgs_table.scan()['Items']:
+        client_number = item['client_number']
+        logging.info(f"Processing Client ID: {client_number}")
+        logging.info(f"Robocorp Org ID: {item['organization_id']}")
+        logging.info(f"Robocorp Workspace ID: {item['workspace_id']}")
+    
 
-    # first_day_of_current_month = BILLING_START_DATE_CURRENT_PERIOD
+    unattended_data = get_unattended_data_from_sharepoint(msgraph_instance)
+    for _, row in unattended_data.iterrows():
+        logging.info(f"Unattended data row: {row.to_dict()}")
 
-    first_day_of_prior_month = BILLING_START_DATE_PRIOR_PERIOD
-    last_day_of_prior_month = BILLING_END_DATE_PRIOR_PERIOD
-    prior_month_str = last_day_of_prior_month.strftime("%Y-%m")
-
-    # Load a sample Excel file into a pandas DataFrame from the output directory
-    # sample_dataframe = load_sample_detail_runtime(last_day_of_prior_month, first_day_of_prior_month)
-    # invoice_json = {"Invoice": {"Id": "2089"}}  # Placeholder for invoice JSON
-    # report_file_path = f"{OUTPUT_DIR}/10002_runtime_report.xlsx"
-
-    unatteded_data = get_unattended_data_from_sharepoint(msgraph_instance)
-
+    return True
     print(f"Processing Clients between {LOWER_CLIENT_ID} and {UPPER_CLIENT_ID-1}")
     for client_id_with_workspace_id, robocorp_control_room_api_key in robocorp_vault.items():
         client_id, organization_id, workspace_id = client_id_with_workspace_id.split("|")
@@ -92,12 +128,12 @@ def process_all_clients():
         "Authorization": f"RC-WSKEY {robocorp_control_room_api_key}"
         }
         
-        total_runtime_prior_month_unattended, unattended_export_file, organization_name = get_unattended_data_from_spreadsheet(unatteded_data, client_id, organization_id, prior_month_str)
+        total_runtime_prior_month_unattended, unattended_export_file_buffer, organization_name = get_unattended_data_from_spreadsheet(unattended_data, client_id, organization_id, BILLING_CONFIG.prior_period_end.strftime("%Y-%m"))
 
-        total_runtime_prior_month_assistant, assistant_export_file, dataframe_prior_month_assistant = get_assistant_runs(
-            last_day_of_prior_month,
-            first_day_of_prior_month,
-            prior_month_str,
+        total_runtime_prior_month_assistant, assistant_export_file_buffer, dataframe_prior_month_assistant = get_assistant_runs(
+            BILLING_CONFIG.prior_period_end,
+            BILLING_CONFIG.prior_period_start,
+            BILLING_CONFIG.prior_period_end.strftime("%Y-%m"),
             client_id,
             workspace_id,
             header,
@@ -117,7 +153,7 @@ def process_all_clients():
             send_data_to_clickup(clickup_vault, client_id, total_runtime_prior_month)
         )
         
-        report_file_path = build_runtime_report(client_id, dataframe_prior_months_unattended, dataframe_prior_month_assistant, included_minutes, consumption_rate)
+        report_datastream = build_runtime_report(client_id, dataframe_prior_months_unattended, dataframe_prior_month_assistant, included_minutes, consumption_rate)
         
         invoice_json = generate_invoice(
             quickbooks_online_vault,
@@ -132,81 +168,49 @@ def process_all_clients():
             billing_cc,
         )
 
-        if report_file_path and invoice_json:
-            attach_detail_runtime_to_invoice(quickbooks_online_vault, invoice_json, report_file_path)
+        if report_datastream and invoice_json:
+            attach_detail_runtime_to_invoice(quickbooks_online_vault, invoice_json, report_datastream)
 
         send_files_to_sharepoint(
-            assistant_export_file,
-            unattended_export_file,
-            report_file_path,
+            msgraph_instance,
+            assistant_export_file_buffer,
+            unattended_export_file_buffer,
+            report_datastream,
         )
         print("=====================================")
 
-def load_sample_detail_runtime(last_day_of_prior_month: datetime, first_day_of_prior_month: datetime):
-    excel_file_path = f"{OUTPUT_DIR}/10013_unattended_processes_detail_2025-03.xlsx"
-    data_frame = pandas.read_excel(excel_file_path)
-    data_frame['started_at'] = pandas.to_datetime(data_frame['started_at'], format='%m/%d/%Y %I:%M:%S %p', utc=True)
-
-    first_day_of_two_months_ago = first_day_of_prior_month - pandas.DateOffset(months=1)
-    filtered_data_prior_two_months = data_frame[
-        (data_frame['started_at'] < last_day_of_prior_month) &
-        (data_frame['started_at'] >= first_day_of_two_months_ago)
-    ]
-    # Convert 'process' JSON string to dictionary and extract 'name'
-    filtered_data_prior_two_months["process"] = filtered_data_prior_two_months["process"].apply(
-        lambda x: ast.literal_eval(x).get("name") if pandas.notnull(x) else None
-    )
-
-    return filtered_data_prior_two_months
-
-def send_files_to_sharepoint(assistant_export_file: str, unattended_export_file: str, report_file_path: str):
+def send_files_to_sharepoint(msgraph_instance: msgraph.MsGraph, assistant_export_file_buffer: str, unattended_export_file_buffer: str, report_datastream: str):
     
-    msgraph_instance = msgraph.MsGraph(APD_CLIENT_ID)
-    
+
     # Get the site ID and drive ID for the Sharepoint site
     _, drive_id = get_site_id_and_drive_id(msgraph_instance, SHAREPOINT_SITE_NAME, DOCUMENT_LIBRARY_NAME)
-
-    # folder_list_json = msgraph_instance.get_folders_in_drive(drive_id)
-    # _, folder_id = msgraph_instance.get_item_name_starts_with(folder_list_json, APD_CLIENT_ID) # Find the client ID folder
-    # sub_folder_list_json = msgraph_instance.get_items_in_folder(drive_id, folder_id)
-    # _, sub_folder_id = msgraph_instance.get_item_name_starts_with(sub_folder_list_json, SUB_FOLDER_NAME) # Find the Minutes folder
-    # sub_items_list_json = msgraph_instance.get_items_in_folder(drive_id, sub_folder_id)
     
-    # Upload the files to the subfolder
-    if assistant_export_file:    
-        with open(f"{OUTPUT_DIR}/{assistant_export_file}", mode="rb") as file:
-            file_content = file.read()
-        if UPLOAD_TO_SHAREPOINT:
-            msgraph_instance.upload_file_to_sharepoint(
-                    drive_id,
-                    BASE_PATH,
-                    assistant_export_file,
-                    file_content,
-                )
-        
-    # Upload the files to the subfolder
-    if unattended_export_file:    
-        with open(f"{OUTPUT_DIR}/{unattended_export_file}", mode="rb") as file:
-            file_content = file.read()
-        if UPLOAD_TO_SHAREPOINT:
-            msgraph_instance.upload_file_to_sharepoint(
-                    drive_id,
-                    BASE_PATH,
-                    unattended_export_file,
-                    file_content,
-                )
+    if UPLOAD_TO_SHAREPOINT:
+        # Upload the files to the subfolder
+        attended_export_filename = "assistant_processes_" + BILLING_CONFIG.sharepoint_file_date + ".xlsx"
+        msgraph_instance.upload_file_to_sharepoint(
+                drive_id,
+                BASE_PATH,
+                attended_export_filename,
+                assistant_export_file_buffer,
+                )    
+        # Upload unattended processes file
+        unattended_export_filename = "unattended_processes_" + BILLING_CONFIG.sharepoint_file_date + ".xlsx"
+        msgraph_instance.upload_file_to_sharepoint(
+                drive_id,
+                BASE_PATH,
+                unattended_export_filename,
+                unattended_export_file_buffer,
+            )
     
-    # Upload the files to the subfolder
-    if report_file_path:
-        with open(report_file_path, mode="rb") as file:
-            file_content = file.read()
-        if UPLOAD_TO_SHAREPOINT:
-            msgraph_instance.upload_file_to_sharepoint(
-                    drive_id,
-                    BASE_PATH,
-                    report_file_path.split("/")[-1],
-                    file_content,
-                )
+        # Upload the files to the subfolder
+        report_filename = "runtime_report_" + BILLING_CONFIG.sharepoint_file_date + ".pdf"
+        msgraph_instance.upload_file_to_sharepoint(
+                drive_id,
+                BASE_PATH,
+                report_filename,
+                report_datastream,
+            )
 
 def attach_detail_runtime_to_invoice(quickbooks_online_vault: dict[str, str], invoice_json: dict[str, str]|None, report_file_path: str):
     # Get the invoice ID from the response
@@ -331,13 +335,14 @@ def send_data_to_clickup(clickup_vault: dict[str, str], client_id: str, total_ru
     organization_task_id = None 
     robocorp_prior_usage_column_id = None
     robocorp_lifetime_usage_column_id = None
-    robocorp_lifetime_usage = None
-    monthly_rate = None
-    included_minutes = None
-    consumption_rate = None
-    day_to_bill = None
+    robocorp_lifetime_usage = 0
+    monthly_rate = 0
+    included_minutes = 0
+    consumption_rate = 0.50
+    day_to_bill = 0
     service_type = None
     client_type = None
+    billing_cc = None
 
     for organization in tasks_list:
         for custom_field in organization["custom_fields"]:
@@ -372,6 +377,8 @@ def send_data_to_clickup(clickup_vault: dict[str, str], client_id: str, total_ru
                         client_type = custom_field.get("type_config", "").get("options", [])[client_type_index].get("name", "")
                     case "Billing CC":
                         billing_cc = custom_field.get("value", "")
+                    case _:
+                        pass #NOSONAR
 
             break
 
@@ -401,7 +408,6 @@ def get_unattended_data_from_spreadsheet(unattended_data:pandas.DataFrame, clien
     #Remove all columns except Organization ID, Organization name, Process name, Process ID, Process total run minutes used, and Process On-demand run minutes used
     unattended_data_for_organization = unattended_data_for_organization[['Organization ID', 'Organization name', 'Process name', 'Process ID', 'Process total run minutes used', 'Process On-demand run minutes used']]
     # Output to Excel
-    unattended_data_for_organization.to_excel(f"{OUTPUT_DIR}/{export_file}")
     
     if unattended_data_for_organization.empty:
         print(f"No unattended processes found for {client_id}")
@@ -438,8 +444,8 @@ def get_unattended_runs(workspace_id: str, header: dict[str, str]):
     
     # Filter the DataFrame for rows in the prior two month
     dataframe_prior_months_unattended = dataframe_unattended_processes[
-        (dataframe_unattended_processes['started_at'] >= BILLING_START_DATE_PRIOR_PERIOD) &
-        (dataframe_unattended_processes['started_at'] <= BILLING_END_DATE_CURRENT_PERIOD)
+        (dataframe_unattended_processes['started_at'] >= BILLING_CONFIG.prior_period_start) &
+        (dataframe_unattended_processes['started_at'] <= BILLING_CONFIG.current_period_end)
     ]
     
     # Get the runtime for each process run in the filtered DataFrame using the step duration
@@ -467,7 +473,7 @@ def get_unattended_runs(workspace_id: str, header: dict[str, str]):
         for step in unattended_run_list:
             if step['duration'] is not None:
                 rounded_minutes = math.ceil(step['duration'] / 60) + rounded_minutes
-        dataframe_prior_months_unattended.loc[index, 'runtime'] = rounded_minutes
+        dataframe_prior_months_unattended.at[index, 'runtime'] = rounded_minutes
 
     return dataframe_prior_months_unattended
 
@@ -491,9 +497,10 @@ def build_runtime_report(client_id: str, dataframe_prior_months_unattended: pand
         return None
     
     # Clean up Names and Convert to DateTime
-    df_trimmed["Process"] = df_trimmed["Process"].apply(
-        lambda x: x.get("name") if isinstance(x, dict) else None
-    )
+    def extract_process_name(x: dict[str, str] | str) -> str|None:
+        return x.get("name", "") if isinstance(x, dict) else None
+    df_trimmed["Process"] = df_trimmed["Process"].apply(extract_process_name)
+    
     df_trimmed["Date"] = pandas.to_datetime(df_trimmed["Date"], utc=True).dt.tz_localize(None).dt.date
     pivot_table_df = df_trimmed.copy()
     bar_chart_df = df_trimmed.copy()
@@ -536,11 +543,7 @@ def build_runtime_report(client_id: str, dataframe_prior_months_unattended: pand
     
     final_data_stream = build_monthly_graph(daily_summary, report_data_stream)
 
-    output_path = f"{OUTPUT_DIR}/{client_id}_runtime_report.xlsx"
-    with open(output_path, "wb") as f:
-        f.write(final_data_stream.getbuffer())
-
-    return output_path
+    return final_data_stream
 
 def add_overage_calculation_sheet(included_minutes: int, consumption_rate: float, total_prior_month: int, report_data_stream: io.BytesIO):
     report_data_stream.seek(0)
@@ -632,7 +635,7 @@ def build_monthly_graph(daily_summary: pandas.DataFrame, report_data_stream: io.
     cats = Reference(ws_graph, min_col=1, min_row=2, max_row=1 + len(daily_summary))
     chart.add_data(data, titles_from_data=True)
     chart.set_categories(cats)
-    ws_graph.add_chart(chart, "H2")
+    ws_graph.add_chart(chart)
     
     # Save the workbook to a stream
     final_stream = io.BytesIO()
@@ -662,9 +665,12 @@ def get_assistant_runs(last_day_of_prior_month: str, first_day_of_prior_month: s
         return 0, "", pandas.DataFrame()
 
     # Extract 'id' and 'name' from the 'assistant' column and create new columns
-    dataframe_assistant_runs['Process ID'] = dataframe_assistant_runs['assistant'].apply(lambda x: x['id'] if isinstance(x, dict) else None)
-    dataframe_assistant_runs['Process Name'] = dataframe_assistant_runs['assistant'].apply(lambda x: x['name'] if isinstance(x, dict) else None)
-
+    def extract_process_info(x: dict[str, str] | str) -> tuple[str|None, str|None]:
+        if isinstance(x, dict):
+            return x.get("id", None), x.get("name", None)
+        return None, None
+    dataframe_assistant_runs['Process ID'], dataframe_assistant_runs['Process Name'] = zip(*dataframe_assistant_runs['assistant'].apply(extract_process_info))
+    
     # Initialize columns
     dataframe_assistant_runs['Organization name'] = organization_name
     dataframe_assistant_runs['Organization ID'] = workspace_id
@@ -681,7 +687,9 @@ def get_assistant_runs(last_day_of_prior_month: str, first_day_of_prior_month: s
         return 0, "", pandas.DataFrame()
 
     # Round the durations up to the nearest minute and assign it to the Process total run minutes used column
-    rounded_minutes = dataframe_prior_month_assistant['duration'].apply(lambda x: math.ceil(x / 60))
+    def round_up_to_minute(x: int) -> int:
+        return math.ceil(x / 60)
+    rounded_minutes = dataframe_prior_month_assistant['duration'].apply(round_up_to_minute)
     dataframe_prior_month_assistant['Process total run minutes used'] = rounded_minutes
     dataframe_prior_month_assistant['runtime'] = rounded_minutes
 
@@ -690,14 +698,17 @@ def get_assistant_runs(last_day_of_prior_month: str, first_day_of_prior_month: s
     
     # Convert timezone-aware datetime columns to naive datetime
     dataframe_prior_month_assistant = dataframe_prior_month_assistant.copy()
-    for col in dataframe_prior_month_assistant.select_dtypes(include=['datetime64[ns, UTC]']).columns:
-        dataframe_prior_month_assistant[col] = dataframe_prior_month_assistant[col].dt.tz_localize(None)
-    
-    # Output to Excel
-    export_file = f"{client_id}_assistant_processes_{prior_month_str}.xlsx"
-    dataframe_prior_month_assistant.to_excel(f"{OUTPUT_DIR}/{export_file}")
+    for col in dataframe_prior_month_assistant.columns:
+        if pandas.api.types.is_datetime64_any_dtype(dataframe_prior_month_assistant[col]):
+            if dataframe_prior_month_assistant[col].dt.tz is not None:
+                dataframe_prior_month_assistant[col] = dataframe_prior_month_assistant[col].dt.tz_localize(None)
 
-    return total_runtime_prior_month_assistant, export_file, dataframe_prior_month_assistant
+    excel_buffer = io.BytesIO()
+    with pandas.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+        dataframe_prior_month_assistant.to_excel(writer, index=False, sheet_name='Assistant Runs')
+
+    excel_buffer.seek(0)    
+    return total_runtime_prior_month_assistant, excel_buffer, dataframe_prior_month_assistant
 
 def get_site_id_and_drive_id(msgraph_instance: msgraph.MsGraph, site_name: str, document_library_name: str):
     #Sharepoint navigation
@@ -708,7 +719,7 @@ def get_site_id_and_drive_id(msgraph_instance: msgraph.MsGraph, site_name: str, 
     return site_id, drive_id
 
 def get_unattended_data_from_sharepoint(msgraph_instance:msgraph.MsGraph) -> pandas.DataFrame:
-    unattended_spreadsheet = f'account-usage-a4db96d0-2dbb-481e-b35a-4629ff252457-{SHAREPOINT_FILE_DATE}.csv'
+    unattended_spreadsheet = f'account-usage-a4db96d0-2dbb-481e-b35a-4629ff252457-{BILLING_CONFIG.sharepoint_file_date}.csv'
     
     # Get the site ID and drive ID for the Sharepoint site
     _, drive_id = get_site_id_and_drive_id(msgraph_instance, SHAREPOINT_SITE_NAME, DOCUMENT_LIBRARY_NAME)
