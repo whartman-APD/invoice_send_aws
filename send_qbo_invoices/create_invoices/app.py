@@ -6,9 +6,7 @@ import os
 # Add shared directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared'))
 
-# Import shared modules when ready
-# import apd_quickbooksonline as quickbooks_online
-# import apd_msgraph_v2 as msgraph
+from shared.task_minutes_to_clickup_and_qbo import process_all_clients
 
 
 def lambda_handler(event: dict[str, Any], context: object):
@@ -32,19 +30,16 @@ def lambda_handler(event: dict[str, Any], context: object):
     dict
         Response with statusCode 200 and success indicator
     """
-    # TODO: Implement invoice creation logic
-    # 1. Get secrets from Secrets Manager
-    # 2. Initialize QuickBooks Online instance
-    # 3. Query recurring transactions or templates
-    # 4. Create invoices for the month
-    # 5. Email summary report
-
     print("Create invoices function triggered - implementation pending")
 
-    return {
-        "statusCode": 200,
-        "body": json.dumps({
-            "ok": True,
-            "message": "Invoice creation not yet implemented"
-        })
-    }
+    success = process_all_clients()
+    if success:
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"ok": True, "message": "Invoices createed successfully"})
+        }
+    else:
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"ok": False, "message": "Failed to process invoices"})
+        }
