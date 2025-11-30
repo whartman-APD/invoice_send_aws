@@ -10,10 +10,13 @@ import os
 import json
 
 def send_qbo_invoices() -> bool:
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
-    
+    # Configure logging for Lambda/local execution
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(levelname)s: %(message)s',
+        force=True  # Force reconfiguration even if already configured
+    )
+
     # Path to assets folder (Lambda runs from function directory, assets is at parent level)
     email_path = os.path.join(os.path.dirname(__file__), '..', 'assets', 'sent_invoices_email_template.html')
     aws_region = os.environ.get("AWS_REGION", "us-west-2")
@@ -123,17 +126,49 @@ def send_email(email_path: str, bookkeeper_email: str, sender_email: str, msgrap
 
 def get_secrets(secret_name_env: str, aws_secretsmanager: Any) -> dict[str, str]:
     """Retrieve the secret from AWS Secrets Manager."""
-    secret_name = os.environ[secret_name_env]
-    secret_value = aws_secretsmanager.get_secret_value(SecretId=secret_name)
-    return json.loads(secret_value["SecretString"])
+    secret_name = None
+    try:
+        secret_name = os.environ[secret_name_env]
+        logging.debug(f"Fetching secret: {secret_name}")
+
+        secret_value = aws_secretsmanager.get_secret_value(SecretId=secret_name)
+        return json.loads(secret_value["SecretString"])
+
+    except KeyError:
+        logging.error(f"Environment variable '{secret_name_env}' not set")
+        raise
+    except aws_secretsmanager.exceptions.ResourceNotFoundException:
+        logging.error(f"Secret '{secret_name or secret_name_env}' not found in Secrets Manager")
+        raise
+    except json.JSONDecodeError as e:
+        logging.error(f"Invalid JSON in secret '{secret_name or secret_name_env}': {e}")
+        raise
+    except Exception as e:
+        logging.error(f"Unexpected error fetching secret '{secret_name or secret_name_env}': {e}")
+        raise
 
 def update_secret(secret_name_env: str, secret_values: dict[str, str], aws_secretsmanager: Any) -> None:
     """Update the secret in AWS Secrets Manager with current vault values."""
-    secret_name = os.environ[secret_name_env]
-    aws_secretsmanager.update_secret(
-        SecretId=secret_name,
-        SecretString=json.dumps(secret_values)
-    )
+    secret_name = None
+    try:
+        secret_name = os.environ[secret_name_env]
+        logging.debug(f"Updating secret: {secret_name}")
+
+        aws_secretsmanager.update_secret(
+            SecretId=secret_name,
+            SecretString=json.dumps(secret_values)
+        )
+        logging.info(f"Successfully updated secret: {secret_name}")
+
+    except KeyError:
+        logging.error(f"Environment variable '{secret_name_env}' not set")
+        raise
+    except aws_secretsmanager.exceptions.ResourceNotFoundException:
+        logging.error(f"Secret '{secret_name or secret_name_env}' not found in Secrets Manager")
+        raise
+    except Exception as e:
+        logging.error(f"Unexpected error updating secret '{secret_name or secret_name_env}': {e}")
+        raise
 
     
 if __name__ == "__main__":
