@@ -1,7 +1,83 @@
 from datetime import datetime
 import json
+import logging
+import os
+from typing import Any
+from mypy_boto3_dynamodb.service_resource import DynamoDBServiceResource, Table
+from mypy_boto3_secretsmanager import SecretsManagerClient
 
+def get_secrets(secret_name_env: str, aws_secretsmanager: SecretsManagerClient) -> dict[str, str]:
+    """Retrieve the secret from AWS Secrets Manager."""
+    secret_name = None
+    try:
+        secret_name = os.environ[secret_name_env]
+        logging.debug(f"Fetching secret: {secret_name}")
 
+        secret_value = aws_secretsmanager.get_secret_value(SecretId=secret_name)
+        return json.loads(secret_value["SecretString"])
+
+    except KeyError:
+        logging.error(f"Environment variable '{secret_name_env}' not set")
+        raise
+    except aws_secretsmanager.exceptions.ResourceNotFoundException:
+        logging.error(f"Secret '{secret_name or secret_name_env}' not found in Secrets Manager")
+        raise
+    except json.JSONDecodeError as e:
+        logging.error(f"Invalid JSON in secret '{secret_name or secret_name_env}': {e}")
+        raise
+    except Exception as e:
+        logging.error(f"Unexpected error fetching secret '{secret_name or secret_name_env}': {e}")
+        raise
+
+def update_secret(secret_name_env: str, secret_values: dict[str, str], aws_secretsmanager: SecretsManagerClient) -> None:
+    """Update the secret in AWS Secrets Manager with current vault values."""
+    secret_name = None
+    try:
+        secret_name = os.environ[secret_name_env]
+        logging.debug(f"Updating secret: {secret_name}")
+
+        aws_secretsmanager.update_secret(
+            SecretId=secret_name,
+            SecretString=json.dumps(secret_values)
+        )
+        logging.info(f"Successfully updated secret: {secret_name}")
+
+    except KeyError:
+        logging.error(f"Environment variable '{secret_name_env}' not set")
+        raise
+    except aws_secretsmanager.exceptions.ResourceNotFoundException:
+        logging.error(f"Secret '{secret_name or secret_name_env}' not found in Secrets Manager")
+        raise
+    except Exception as e:
+        logging.error(f"Unexpected error updating secret '{secret_name or secret_name_env}': {e}")
+        raise
+
+def get_dynamodb_table(table_name_env: str, aws_dynamodb: DynamoDBServiceResource) -> Table:
+    """Retrieve the DynamoDB table resource."""
+    table_name = None
+    try:
+        table_name = os.environ[table_name_env]
+        logging.debug(f"Accessing DynamoDB table: {table_name}")
+
+        table = aws_dynamodb.Table(table_name)
+        return table
+
+    except KeyError:
+        logging.error(f"Environment variable '{table_name_env}' not set")
+        raise
+    except Exception as e:
+        logging.error(f"Unexpected error accessing DynamoDB table '{table_name or table_name_env}': {e}")
+        raise
+
+def get_dynamodb_item(table: Table, key: dict[str, Any]) -> dict[str, Any]|None:
+    """Retrieve an item from the DynamoDB table by key."""
+    try:
+        response = table.get_item(Key=key)
+        return response.get('Item', None)
+
+    except Exception as e:
+        logging.error(f"Error retrieving item with key {key} from DynamoDB: {e}")
+        raise
 
 def append_date_to_filename(file_name:str, with_time:bool=False):
     """
