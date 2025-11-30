@@ -34,8 +34,8 @@ def send_qbo_invoices() -> bool:
     # Get secrets and intialize instances
     try:
         aws_secretsmanager = boto3.client("secretsmanager", region_name=aws_region)
-        msgraph_vault = get_secrets("MSGRAPH_SECRET_NAME", aws_secretsmanager)
-        quickbooks_online_vault = get_secrets("QBO_SECRET_NAME", aws_secretsmanager)
+        msgraph_vault = apd_common.get_secrets("MSGRAPH_SECRET_NAME", aws_secretsmanager)
+        quickbooks_online_vault = apd_common.get_secrets("QBO_SECRET_NAME", aws_secretsmanager)
         msgraph_instance = msgraph.MsGraph(
             tenant=msgraph_vault["tenant_id"],
             client_id=msgraph_vault["client_id"],
@@ -47,7 +47,7 @@ def send_qbo_invoices() -> bool:
         return False
 
     # Write tokens back to secrets manager
-    update_secret("QBO_SECRET_NAME", quickbooks_online_instance.vault_values, aws_secretsmanager)
+    apd_common.update_secret("QBO_SECRET_NAME", quickbooks_online_instance.vault_values, aws_secretsmanager)
 
     # Get invoices for today
     query = f"select * from Invoice where TxnDate = '{current_date}'"
@@ -124,52 +124,5 @@ def send_email(email_path: str, bookkeeper_email: str, sender_email: str, msgrap
         logging.info("Email sent successfully.")
         return True
 
-def get_secrets(secret_name_env: str, aws_secretsmanager: Any) -> dict[str, str]:
-    """Retrieve the secret from AWS Secrets Manager."""
-    secret_name = None
-    try:
-        secret_name = os.environ[secret_name_env]
-        logging.debug(f"Fetching secret: {secret_name}")
-
-        secret_value = aws_secretsmanager.get_secret_value(SecretId=secret_name)
-        return json.loads(secret_value["SecretString"])
-
-    except KeyError:
-        logging.error(f"Environment variable '{secret_name_env}' not set")
-        raise
-    except aws_secretsmanager.exceptions.ResourceNotFoundException:
-        logging.error(f"Secret '{secret_name or secret_name_env}' not found in Secrets Manager")
-        raise
-    except json.JSONDecodeError as e:
-        logging.error(f"Invalid JSON in secret '{secret_name or secret_name_env}': {e}")
-        raise
-    except Exception as e:
-        logging.error(f"Unexpected error fetching secret '{secret_name or secret_name_env}': {e}")
-        raise
-
-def update_secret(secret_name_env: str, secret_values: dict[str, str], aws_secretsmanager: Any) -> None:
-    """Update the secret in AWS Secrets Manager with current vault values."""
-    secret_name = None
-    try:
-        secret_name = os.environ[secret_name_env]
-        logging.debug(f"Updating secret: {secret_name}")
-
-        aws_secretsmanager.update_secret(
-            SecretId=secret_name,
-            SecretString=json.dumps(secret_values)
-        )
-        logging.info(f"Successfully updated secret: {secret_name}")
-
-    except KeyError:
-        logging.error(f"Environment variable '{secret_name_env}' not set")
-        raise
-    except aws_secretsmanager.exceptions.ResourceNotFoundException:
-        logging.error(f"Secret '{secret_name or secret_name_env}' not found in Secrets Manager")
-        raise
-    except Exception as e:
-        logging.error(f"Unexpected error updating secret '{secret_name or secret_name_env}': {e}")
-        raise
-
-    
 if __name__ == "__main__":
     send_qbo_invoices()
