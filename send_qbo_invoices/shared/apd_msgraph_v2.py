@@ -366,7 +366,7 @@ class MsGraph:
             folder_names.append(match.value)
         if len(folder_names) == 0:
             print("No folders found")
-            return None
+            return None, None
         elif len(folder_names) > 1:
             print("Error: multiple results found")
             print(folder_names)
