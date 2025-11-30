@@ -17,9 +17,11 @@ Globals:
       Variables:
         QBO_SECRET_NAME: 10000/QBO
         MSGRAPH_SECRET_NAME: 10000/MsGraph
+        CLICKUP_SECRET_NAME: 10000/ClickUp
         BOOKKEEPER_EMAIL: whartman@automatapracdev.com
         EXCLUDED_CUSTOMERS: "10001 - AICPA"
         SENDER_EMAIL: robotarmy@automatapracdev.com
+        DYNAMODB_TABLE_ROBOCORP_CLIENTS: "Robocorp_Client_Org_Workspace_IDs"
 
 Resources:
   # Lambda function to send daily invoices
