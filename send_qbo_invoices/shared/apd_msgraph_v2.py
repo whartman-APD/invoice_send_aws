@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 BASE_URL = "https://graph.microsoft.com/v1.0"
 
 class MsGraph:
-    def __init__(self, client_id:str, client_secret:str, tenant:str):
+    def __init__(self, client_id:str, client_secret:str, tenant:str, hostname:str):
         """
         # `MsGraph` Class
         A class for interacting with the Microsoft Graph API.
@@ -22,6 +22,7 @@ class MsGraph:
             "client_id": client_id,
             "client_secret_value": client_secret,
         }
+        self.hostname = hostname
         self.access_token = self.request_access_token()
 
     def refresh_client_secret(self):
@@ -206,7 +207,7 @@ class MsGraph:
         else:
             return response
 
-    def get_sharepoint_site(self, site_name):
+    def get_sharepoint_site(self, site_name:str):
         """
         # `get_sharepoint_site` Function
 
@@ -229,7 +230,7 @@ class MsGraph:
 
         """
         print("Getting Sharepoint Site")
-        url = f"{BASE_URL}/sites/{self.vault_values['SharepointHostName']}:/sites/{site_name}"
+        url = f"{BASE_URL}/sites/{self.hostname}:/sites/{site_name}"
         print(url)
         headers = {
             "Authorization": f"Bearer {self.access_token}",

@@ -24,7 +24,7 @@ def get_tasks(vault_values, list_id, include_closed=True, query_parameters=None)
 
     ## Example
     ```python
-    tasks = get_tasks(vault_values={"Token": "your_token"}, list_id="list123", query_parameters={"include_closed": "true"})
+    tasks = get_tasks(vault_values={"token": "your_token"}, list_id="list123", query_parameters={"include_closed": "true"})
     ```
 
     ## Output
@@ -35,7 +35,7 @@ def get_tasks(vault_values, list_id, include_closed=True, query_parameters=None)
     max_attempts = 3
     while True:
         url = f"{clickup_api_url}list/{list_id}/task"
-        headers = {"Authorization": vault_values["Token"]}
+        headers = {"Authorization": vault_values["token"]}
         params = {}
         if include_closed:
             params = {"include_closed": "true"}
@@ -83,14 +83,14 @@ def get_task(vault_values, task_id):
 
     ## Example
     ```python
-    task = get_task(vault_values={"Token": "your_token"}, task_id="task123")
+    task = get_task(vault_values={"token": "your_token"}, task_id="task123")
     ```
 
     ## Output
     This function returns a dictionary containing information about the fetched task.
     """
     url = f"{clickup_api_url}task/{task_id}"
-    headers = {"Authorization": vault_values["Token"]}
+    headers = {"Authorization": vault_values["token"]}
     response = requests.get(url=url, headers=headers)
     return response.json()
 
@@ -113,14 +113,14 @@ def create_task(vault_values, list_id, task_name="", args=None):
 
     ## Example
     ```python
-    task = create_task(vault_values={"Token": "your_token"}, list_id="list123", task_name="New Task", args={"description": "Task description"})
+    task = create_task(vault_values={"token": "your_token"}, list_id="list123", task_name="New Task", args={"description": "Task description"})
     ```
 
     ## Output
     This function returns a dictionary containing information about the created task.
     """
     url = f"{clickup_api_url}list/{list_id}/task"
-    headers = {"Authorization": vault_values["Token"]}
+    headers = {"Authorization": vault_values["token"]}
     if args is None:
         final_object = {"name": task_name}
     else:
@@ -142,7 +142,7 @@ def create_task(vault_values, list_id, task_name="", args=None):
 
 def update_task(vault_values, task_id, task_name, task_description):
     url = f"{clickup_api_url}task/{task_id}"
-    headers = {"Authorization": vault_values["Token"]}
+    headers = {"Authorization": vault_values["token"]}
     response = requests.put(
         url=url, headers=headers, json={"name": task_name, "content": task_description}
     )
@@ -151,20 +151,20 @@ def update_task(vault_values, task_id, task_name, task_description):
 
 def delete_task(vault_values, task_id):
     url = f"{clickup_api_url}task/{task_id}"
-    headers = {"Authorization": vault_values["Token"]}
+    headers = {"Authorization": vault_values["token"]}
     response = requests.delete(url=url, headers=headers)
     return response
 
 
 def get_lists(vault_values, space_id):
     url = f"{clickup_api_url}space/{space_id}/list"
-    headers = {"Authorization": vault_values["Token"]}
+    headers = {"Authorization": vault_values["token"]}
     response = requests.get(url=url, headers=headers)
     return response.json()
 
 def get_folder(vault_values, folder_id):
     url = f"{clickup_api_url}folder/{folder_id}"
-    headers = {"Authorization": vault_values["Token"]}
+    headers = {"Authorization": vault_values["token"]}
     response = requests.get(url=url, headers=headers)
     return response.json()
 
@@ -174,42 +174,42 @@ def get_lists_in_folder(vault_values, folder_id):
 
 def create_folderless_list(vault_values, space_id, list_name):
     url = f"{clickup_api_url}space/{space_id}/list"
-    headers = {"Authorization": vault_values["Token"]}
+    headers = {"Authorization": vault_values["token"]}
     response = requests.post(url=url, headers=headers, json={"name": list_name})
     return response.json()
 
 
 def create_list_in_folder(vault_values, folder_id, list_name):
     url = f"{clickup_api_url}/folder/{folder_id}/list"
-    headers = {"Authorization": vault_values["Token"]}
+    headers = {"Authorization": vault_values["token"]}
     response = requests.post(url=url, headers=headers, json={"name": list_name})
     return response.json()
 
 
 def update_list(vault_values, list_id, list_name):
     url = f"{clickup_api_url}list/{list_id}"
-    headers = {"Authorization": vault_values["Token"]}
+    headers = {"Authorization": vault_values["token"]}
     response = requests.put(url=url, headers=headers, json={"name": list_name})
     return response.json()
 
 
 def delete_list(vault_values, list_id):
     url = f"{clickup_api_url}list/{list_id}"
-    headers = {"Authorization": vault_values["Token"]}
+    headers = {"Authorization": vault_values["token"]}
     response = requests.delete(url=url, headers=headers)
     return response.json()
 
 
 def get_accessible_custom_fields(vault_values, list_id):
     url = f"{clickup_api_url}list/{list_id}/field"
-    headers = {"Authorization": vault_values["Token"]}
+    headers = {"Authorization": vault_values["token"]}
     response = requests.get(url=url, headers=headers)
     return response.json()
 
 
 def set_custom_field_value(vault_values, task_id, custom_field_id, value):
     url = f"{clickup_api_url}task/{task_id}/field/{custom_field_id}"
-    headers = {"Authorization": vault_values["Token"]}
+    headers = {"Authorization": vault_values["token"]}
     response = requests.post(url=url, headers=headers, json={"value": value})
     return response.json()
 
@@ -244,7 +244,7 @@ def create_task_comment(
     """
 
     url = f"{clickup_api_url}task/{task_id}/comment"
-    headers = {"Authorization": vault_values["Token"]}
+    headers = {"Authorization": vault_values["token"]}
     json = {
         "comment_text": comment_text,
         "assignee": assignee_id,
