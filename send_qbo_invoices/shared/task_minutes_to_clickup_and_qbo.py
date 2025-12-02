@@ -27,8 +27,8 @@ from dataclasses import dataclass
 UPLOAD_TO_SHAREPOINT = True
 CREATE_INVOICE = True
 UPDATE_CLICKUP = True
-LOWER_CLIENT_ID = 10022 # Include this client ID
-UPPER_CLIENT_ID = 10025 # Exclude this client ID
+LOWER_CLIENT_ID = 10000 # Include this client ID
+UPPER_CLIENT_ID = 10026 # Exclude this client ID
 
 # Constants
 SHAREPOINT_SITE_NAME = "APDClientFiles"
@@ -480,8 +480,6 @@ def get_unattended_runs(workspace_id: str, header: dict[str, str]) -> pandas.Dat
             if step['duration'] is not None:
                 rounded_minutes = math.ceil(step['duration'] / 60) + rounded_minutes
         dataframe_prior_months_unattended.at[index, 'runtime'] = rounded_minutes
-        if count > 50:
-            break  # Limit to first 50 for testing purposes
 
     return dataframe_prior_months_unattended
 
