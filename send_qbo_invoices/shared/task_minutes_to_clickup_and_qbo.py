@@ -28,7 +28,8 @@ UPLOAD_TO_SHAREPOINT = True
 CREATE_INVOICE = True
 UPDATE_CLICKUP = True
 LOWER_CLIENT_ID = 10000 # Include this client ID
-UPPER_CLIENT_ID = 10026 # Exclude this client ID
+UPPER_CLIENT_ID = 10030 # Exclude this client ID
+
 
 # Constants
 SHAREPOINT_SITE_NAME = "APDClientFiles"
@@ -85,10 +86,10 @@ def process_all_clients():
     # Get the secrets from the vault
     try:
         aws_secretsmanager = boto3.client("secretsmanager", region_name=aws_region)
-        msgraph_vault = apd_common.get_secrets("MSGRAPH_SECRET_NAME", aws_secretsmanager)
         quickbooks_online_vault = apd_common.get_secrets("QBO_SECRET_NAME", aws_secretsmanager)
         clickup_vault = apd_common.get_secrets("CLICKUP_SECRET_NAME", aws_secretsmanager)
         robocorp_vault = apd_common.get_secrets("ROBOCORP_API_SECRET_NAME", aws_secretsmanager)
+        msgraph_vault = apd_common.get_secrets("MSGRAPH_SECRET_NAME", aws_secretsmanager)
         msgraph_instance = msgraph.MsGraph(
                 tenant=msgraph_vault["tenant_id"],
                 client_id=msgraph_vault["client_id"],
@@ -166,6 +167,7 @@ def process_all_clients():
 
         send_files_to_sharepoint(
             msgraph_instance,
+            client_number,
             assistant_export_file_stream,
             unattended_export_file_stream,
             report_datastream,
@@ -174,14 +176,15 @@ def process_all_clients():
         print("=====================================")
     return True
 
-def send_files_to_sharepoint(msgraph_instance: msgraph.MsGraph, assistant_export_file_stream: str, unattended_export_file_stream: str, report_datastream: str):
-    
+def send_files_to_sharepoint(msgraph_instance: msgraph.MsGraph, client_number: str, assistant_export_file_stream: str, unattended_export_file_stream: str, report_datastream: str):
+    # Re-Authenticate and get access token
+    msgraph_instance.access_token = msgraph_instance.request_access_token()
     # Get the site ID and drive ID for the Sharepoint site
     _, drive_id = get_site_id_and_drive_id(msgraph_instance, SHAREPOINT_SITE_NAME, DOCUMENT_LIBRARY_NAME)
     
     if UPLOAD_TO_SHAREPOINT:
         # Upload the files to the subfolder
-        attended_export_filename = "assistant_processes_" + BILLING_CONFIG.sharepoint_file_date + ".xlsx"
+        attended_export_filename = client_number + "_assistant_processes_" + BILLING_CONFIG.sharepoint_file_date + ".xlsx"
         msgraph_instance.upload_file_to_sharepoint(
                 drive_id,
                 BASE_PATH,
@@ -189,7 +192,7 @@ def send_files_to_sharepoint(msgraph_instance: msgraph.MsGraph, assistant_export
                 assistant_export_file_stream,
                 )    
         # Upload unattended processes file
-        unattended_export_filename = "unattended_processes_" + BILLING_CONFIG.sharepoint_file_date + ".xlsx"
+        unattended_export_filename = client_number + "_unattended_processes_" + BILLING_CONFIG.sharepoint_file_date + ".xlsx"
         msgraph_instance.upload_file_to_sharepoint(
                 drive_id,
                 BASE_PATH,
@@ -198,7 +201,7 @@ def send_files_to_sharepoint(msgraph_instance: msgraph.MsGraph, assistant_export
             )
     
         # Upload the files to the subfolder
-        report_filename = "runtime_report_" + BILLING_CONFIG.sharepoint_file_date + ".pdf"
+        report_filename = client_number + "_runtime_report_" + BILLING_CONFIG.sharepoint_file_date + ".pdf"
         msgraph_instance.upload_file_to_sharepoint(
                 drive_id,
                 BASE_PATH,
@@ -206,7 +209,7 @@ def send_files_to_sharepoint(msgraph_instance: msgraph.MsGraph, assistant_export
                 report_datastream,
             )
 
-def attach_detail_runtime_to_invoice(quickbooks_online_vault: dict[str, str], invoice_json: dict[str, str]|None, report_file_path: str):
+def attach_detail_runtime_to_invoice(quickbooks_online_vault: dict[str, str], invoice_json: dict[str, str]|None, report_datastream: str):
     # Get the invoice ID from the response
     if invoice_json is None:
         print("No invoice JSON returned. Skipping attachment.")
@@ -215,9 +218,9 @@ def attach_detail_runtime_to_invoice(quickbooks_online_vault: dict[str, str], in
     print(f"Invoice ID: {invoice_id}")
 
     quickbooks_online_instance = quickbooks_online.QuickBooksOnline(quickbooks_online_vault)
-    quickbooks_online_instance.upload_attachment(report_file_path, "Invoice", invoice_id)
+    quickbooks_online_instance.upload_attachment(report_datastream, "invoice.pdf", "Invoice", invoice_id, content_type="application/pdf")
 
-    print(f"Attached {report_file_path} to invoice {invoice_id} in QuickBooks Online.")
+    print(f"Attached report to invoice {invoice_id} in QuickBooks Online.")
 
 def generate_invoice(quickbooks_online_vault: dict[str, str], client_number: str, monthly_rate: float, included_minutes: int, consumption_rate: float, total_runtime_prior_month: int, day_to_bill: str, service_type: str, client_type: str, billing_cc: str):
     # Get the day to bill from the custom field
