@@ -537,7 +537,7 @@ class QuickBooksOnline:
         return response.json()
 
     @retry_on_failure()
-    def upload_attachment(self, file_path: str, object_type: str, object_id: str, minorversion: int = MINOR_VERSION) -> dict[str, Any]:
+    def upload_attachment(self, file_data: str | Any, file_name: str, object_type: str, object_id: str, content_type: str | None = None, minorversion: int = MINOR_VERSION) -> dict[str, Any]:
         """
         # `upload_attachment` Function
 
@@ -545,9 +545,11 @@ class QuickBooksOnline:
 
         ## Arguments
 
-        - `file_path`: The path to the file to upload.
+        - `file_data`: Either a file path (str) or a BytesIO object containing the file data.
+        - `file_name`: The name of the file (e.g., "invoice.pdf"). Required when using BytesIO.
         - `object_type`: The type of the object to attach the file to (e.g., "Invoice").
         - `object_id`: The ID of the object to attach the file to.
+        - `content_type`: The MIME type of the file (e.g., "application/pdf"). If None, will be auto-detected from file_name.
         - `minorversion`: The minor version to use. Default is MINOR_VERSION.
 
         ## Returns
@@ -560,14 +562,17 @@ class QuickBooksOnline:
         }
         headers = self._create_headers()
         headers.pop("Content-Type")  # Remove Content-Type to let requests set it with the multipart boundary
-        content_type, _ = mimetypes.guess_type(file_path)
-        if not content_type:
-            raise ValueError("Unable to determine the content type of the file.")
-        file_name = os.path.basename(file_path)
+
+        # Determine content type
+        if content_type is None:
+            content_type, _ = mimetypes.guess_type(file_name)
+            if not content_type:
+                raise ValueError("Unable to determine the content type of the file. Please provide content_type parameter.")
+
         metadata = {
             "AttachableRef": [
                 {
-                    "EntityRef": {"type": object_type, "value": object_id}, 
+                    "EntityRef": {"type": object_type, "value": object_id},
                     "IncludeOnSend": True
                 }
             ],
@@ -575,12 +580,22 @@ class QuickBooksOnline:
             "FileName": file_name,
         }
 
-        with open(file_path, 'rb') as file_data:
+        # Handle both file path and BytesIO
+        if isinstance(file_data, str):
+            # file_data is a file path
+            with open(file_data, 'rb') as f:
+                files = {
+                    'file_metadata_01': ('metadata.json', json.dumps(metadata), 'application/json'),
+                    'file_content_01': (file_name, f, content_type)
+                }
+                response = requests.post(url, headers=headers, params=params, files=files, timeout=60)
+        else:
+            # file_data is a BytesIO object (or similar file-like object)
             files = {
                 'file_metadata_01': ('metadata.json', json.dumps(metadata), 'application/json'),
                 'file_content_01': (file_name, file_data, content_type)
             }
-
             response = requests.post(url, headers=headers, params=params, files=files, timeout=60)
-            response.raise_for_status()
-            return response.json()
+
+        response.raise_for_status()
+        return response.json()
