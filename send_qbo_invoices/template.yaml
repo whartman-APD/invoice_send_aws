@@ -15,10 +15,10 @@ Globals:
       - x86_64
     Environment:
       Variables:
-        QBO_SECRET_NAME: 10000/QBO
-        MSGRAPH_SECRET_NAME: 10000/MsGraph
-        CLICKUP_SECRET_NAME: 10000/ClickUp
-        ROBOCORP_API_SECRET_NAME: 10000/RobocorpClientAPIKeys
+        QBO_SECRET_NAME: QBO/10000
+        MSGRAPH_SECRET_NAME: MsGraph/10000
+        CLICKUP_SECRET_NAME: ClickUp/10000
+        ROBOCORP_API_SECRET_NAME: RobocorpClient/10000/APIKeys
         BOOKKEEPER_EMAIL: whartman@automatapracdev.com
         EXCLUDED_CUSTOMERS: "10001 - AICPA"
         SENDER_EMAIL: robotarmy@automatapracdev.com
