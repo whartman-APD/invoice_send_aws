@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  invoice-processor:
+    build: .
+    image: qbo-invoice-processor:latest
+    container_name: qbo-invoice-processor
+
+    # Mount AWS credentials from host machine (read-write for SSO token refresh)
+    volumes:
+      - ~/.aws:/root/.aws
+
+    # Environment variables from .env file
+    environment:
+      # AWS Configuration
+      - AWS_PROFILE=${AWS_PROFILE:-default}
+      - AWS_REGION=${AWS_REGION:-us-west-2}
+
+      # AWS Secrets Manager Secret Names
+      - QBO_SECRET_NAME=${QBO_SECRET_NAME:-QBO/10000}
+      - MSGRAPH_SECRET_NAME=${MSGRAPH_SECRET_NAME:-MsGraph/10000}
+      - CLICKUP_SECRET_NAME=${CLICKUP_SECRET_NAME:-ClickUp/10000}
+      - ROBOCORP_API_SECRET_NAME=${ROBOCORP_API_SECRET_NAME:-RoboCorp/10000/ClientAPIKeys}
+
+      # DynamoDB Table
+      - DYNAMODB_TABLE_ROBOCORP_CLIENTS=${DYNAMODB_TABLE_ROBOCORP_CLIENTS:-Robocorp_Client_Org_Workspace_IDs}
+
+      # Email Configuration
+      - BOOKKEEPER_EMAIL=${BOOKKEEPER_EMAIL:-whartman@automatapracdev.com}
+      - SENDER_EMAIL=${SENDER_EMAIL:-robotarmy@automatapracdev.com}
+      - EXCLUDED_CUSTOMERS=${EXCLUDED_CUSTOMERS:-10001 - AICPA}
+
+      # Microsoft Graph Configuration
+      - MS_GRAPH_HOSTNAME=${MS_GRAPH_HOSTNAME:-automatapracdev.sharepoint.com}
+
+      # Invoice Creation Configuration
+      - UPLOAD_TO_SHAREPOINT=${UPLOAD_TO_SHAREPOINT:-false}
+      - CREATE_INVOICE=${CREATE_INVOICE:-false}
+      - UPDATE_CLICKUP=${UPDATE_CLICKUP:-false}
+      - LOWER_CLIENT_ID=${LOWER_CLIENT_ID:-10000}
+      - UPPER_CLIENT_ID=${UPPER_CLIENT_ID:-20030}
+      - NET_30_DAYS_CLIENTS=${NET_30_DAYS_CLIENTS:-10020}

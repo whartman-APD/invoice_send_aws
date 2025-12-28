@@ -18,12 +18,13 @@ Globals:
         QBO_SECRET_NAME: QBO/10000
         MSGRAPH_SECRET_NAME: MsGraph/10000
         CLICKUP_SECRET_NAME: ClickUp/10000
-        ROBOCORP_API_SECRET_NAME: RobocorpClient/10000/APIKeys
+        ROBOCORP_API_SECRET_NAME: RoboCorp/10000/ClientAPIKeys
         BOOKKEEPER_EMAIL: whartman@automatapracdev.com
         EXCLUDED_CUSTOMERS: "10001 - AICPA"
         SENDER_EMAIL: robotarmy@automatapracdev.com
         DYNAMODB_TABLE_ROBOCORP_CLIENTS: "Robocorp_Client_Org_Workspace_IDs"
         MS_GRAPH_HOSTNAME: automatapracdev.sharepoint.com
+        # BILLING_REFERENCE_DATE: "2025-11-01"  # Optional: Uncomment to override billing period (format: YYYY-MM-DD)
 
 Resources:
   # Lambda function to send daily invoices
