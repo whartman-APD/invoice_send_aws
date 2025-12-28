@@ -23,12 +23,24 @@ import boto3
 import apd_common
 from dataclasses import dataclass
 
-# Configuration
-UPLOAD_TO_SHAREPOINT = False
-CREATE_INVOICE = False
-UPDATE_CLICKUP = False
-LOWER_CLIENT_ID = 10000 # Include this client ID
-UPPER_CLIENT_ID = 10030 # Exclude this client ID
+# Configuration (loaded from environment variables)
+UPLOAD_TO_SHAREPOINT = os.environ.get("UPLOAD_TO_SHAREPOINT", "false").lower() == "true"
+CREATE_INVOICE = os.environ.get("CREATE_INVOICE", "false").lower() == "true"
+UPDATE_CLICKUP = os.environ.get("UPDATE_CLICKUP", "false").lower() == "true"
+LOWER_CLIENT_ID = int(os.environ.get("LOWER_CLIENT_ID", "10000"))
+UPPER_CLIENT_ID = int(os.environ.get("UPPER_CLIENT_ID", "20030"))
+NET_30_DAYS_CLIENTS = os.environ.get("NET_30_DAYS_CLIENTS", "").split(",")
+
+def get_billing_reference_date() -> datetime:
+    """Get billing reference date from environment variable or default to first day of current month."""
+    reference_date_str = os.environ.get("BILLING_REFERENCE_DATE", "")
+    if reference_date_str:
+        # Parse format: YYYY-MM-DD
+        return datetime.strptime(reference_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    else:
+        # Default to first day of current month
+        now = datetime.now(timezone.utc)
+        return datetime(now.year, now.month, 1, tzinfo=timezone.utc)
 
 
 # Constants
@@ -70,7 +82,7 @@ class BillingPeriodConfig:
 
 # Initialize billing configuration
 BILLING_CONFIG = BillingPeriodConfig(
-    reference_date=datetime(2025, 11, 1, tzinfo=timezone.utc)
+    reference_date=get_billing_reference_date()
 )
 
 def process_all_clients():
@@ -94,7 +106,7 @@ def process_all_clients():
                 tenant=msgraph_vault["tenant_id"],
                 client_id=msgraph_vault["client_id"],
                 client_secret=msgraph_vault["client_secret_value"],
-                hostname=os.environ.get("MS_GRAPH_HOSTNAME", "automatapracdev.sharepoint.com")
+                hostname=msgraph_vault["hostname"]
             )
         aws_dynamodb = boto3.resource('dynamodb', region_name=aws_region)
         client_orgs_table = apd_common.get_dynamodb_table("DYNAMODB_TABLE_ROBOCORP_CLIENTS", aws_dynamodb)
@@ -227,7 +239,7 @@ def generate_invoice(quickbooks_online_vault: dict[str, str], client_number: str
     current_month_and_year = datetime.now().replace(day=int(day_to_bill))
     formatted_date = current_month_and_year.strftime("%Y-%m-%d")
     due_date = formatted_date
-    if client_number == "10020":
+    if client_number in NET_30_DAYS_CLIENTS:
         due_date = (current_month_and_year + relativedelta(months=1)).strftime("%Y-%m-%d")
 
     formatted_date_long = current_month_and_year.strftime("%B %d, %Y")
@@ -688,9 +700,9 @@ def get_assistant_runs(last_day_of_prior_month: str, first_day_of_prior_month: s
 
     # Filter the DataFrame for rows in the prior month and with state "completed"
     dataframe_prior_month_assistant = dataframe_assistant_runs[
-        (dataframe_assistant_runs['started_at'] >= first_day_of_prior_month) & 
+        (dataframe_assistant_runs['started_at'] >= first_day_of_prior_month) &
         (dataframe_assistant_runs['started_at'] <= last_day_of_prior_month)
-    ]
+    ].copy()
 
     if dataframe_prior_month_assistant.empty:
         print("No Assistant runs found for the prior month.")
@@ -705,13 +717,13 @@ def get_assistant_runs(last_day_of_prior_month: str, first_day_of_prior_month: s
 
     # Sum the Process total run minutes used for these filtered rows
     total_runtime_prior_month_assistant = dataframe_prior_month_assistant['Process total run minutes used'].sum()
-    
+
     # Convert timezone-aware datetime columns to naive datetime
-    dataframe_prior_month_assistant = dataframe_prior_month_assistant.copy()
     for col in dataframe_prior_month_assistant.columns:
         if pandas.api.types.is_datetime64_any_dtype(dataframe_prior_month_assistant[col]):
-            if dataframe_prior_month_assistant[col].dt.tz is not None:
-                dataframe_prior_month_assistant[col] = dataframe_prior_month_assistant[col].dt.tz_localize(None)
+            series = dataframe_prior_month_assistant[col]
+            if hasattr(series.dt, 'tz') and series.dt.tz is not None:  # type: ignore
+                dataframe_prior_month_assistant[col] = series.dt.tz_localize(None)  # type: ignore
 
 
     with pandas.ExcelWriter(excel_stream, engine='xlsxwriter') as writer:
