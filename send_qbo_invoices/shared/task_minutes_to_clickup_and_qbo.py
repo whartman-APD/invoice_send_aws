@@ -24,9 +24,9 @@ import apd_common
 from dataclasses import dataclass
 
 # Configuration
-UPLOAD_TO_SHAREPOINT = True
-CREATE_INVOICE = True
-UPDATE_CLICKUP = True
+UPLOAD_TO_SHAREPOINT = False
+CREATE_INVOICE = False
+UPDATE_CLICKUP = False
 LOWER_CLIENT_ID = 10000 # Include this client ID
 UPPER_CLIENT_ID = 10030 # Exclude this client ID
 
