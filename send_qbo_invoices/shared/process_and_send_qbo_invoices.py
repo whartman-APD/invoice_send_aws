@@ -40,6 +40,7 @@ def send_qbo_invoices() -> bool:
             tenant=msgraph_vault["tenant_id"],
             client_id=msgraph_vault["client_id"],
             client_secret=msgraph_vault["client_secret_value"],
+            hostname=msgraph_vault["hostname"]
         )
         quickbooks_online_instance = quickbooks_online.QuickBooksOnline(quickbooks_online_vault)
     except Exception as e:
