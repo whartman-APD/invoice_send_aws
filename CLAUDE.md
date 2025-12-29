@@ -4,74 +4,73 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AWS SAM Lambda application with two functions for QuickBooks Online invoice automation:
-1. **SendInvoicesFunction** - Sends today's invoices to clients daily and emails summary to bookkeeper
-2. **CreateInvoicesFunction** - Creates monthly invoices from recurring transactions (implementation pending)
+Docker-based application with two automated functions for QuickBooks Online invoice automation:
+1. **Send Invoices** - Sends today's invoices to clients daily and emails summary to bookkeeper
+2. **Create Invoices** - Creates monthly invoices from recurring transactions (task minutes from ClickUp)
 
 ## Common Commands
 
 All commands run from `send_qbo_invoices/` directory:
 
+### Docker Operations
+
 ```bash
-# Build both Lambda functions
-sam build --use-container
+# Build the Docker image
+docker-compose build
 
-# Deploy (first time)
-sam deploy --guided
+# Run Send Invoices function
+docker-compose run --rm send-invoices
 
-# Deploy (subsequent)
-sam deploy
+# Run Create Invoices function
+docker-compose run --rm create-invoices
 
-# Local invoke - Send Invoices Function
-sam local invoke SendInvoicesFunction --event events/event.json
+# View logs
+docker-compose logs
 
-# Local invoke - Create Invoices Function
-sam local invoke CreateInvoicesFunction --event events/event.json
+# Clean up containers
+docker-compose down
 
-# Local API
-sam local start-api
-# Then test endpoints:
-curl -X POST http://localhost:3000/send-invoices
-curl -X POST http://localhost:3000/create-invoices
-
-# View logs for Send Invoices
-sam logs -n SendInvoicesFunction --stack-name "send_qbo_invoices" --tail
-
-# View logs for Create Invoices
-sam logs -n CreateInvoicesFunction --stack-name "send_qbo_invoices" --tail
-
-# Delete stack
-sam delete --stack-name "send_qbo_invoices"
+# Rebuild and run (after code changes)
+docker-compose build && docker-compose run --rm send-invoices
 ```
 
-### Testing
+### Local Development
 
 ```bash
-# Install test dependencies
-pip install -r tests/requirements.txt
+# Install dependencies locally for development
+pip install -r requirements.txt
 
-# Run unit tests
-python -m pytest tests/unit -v
+# Run functions directly (requires .env file)
+python entrypoint.py send-invoices
+python entrypoint.py create-invoices
+```
 
-# Run single test file
-python -m pytest tests/unit/test_handler.py -v
+### Environment Configuration
 
-# Integration tests (requires deployed stack)
-AWS_SAM_STACK_NAME="send_qbo_invoices" python -m pytest tests/integration -v
+```bash
+# Copy environment template
+cp .env.template .env
+
+# Edit .env file with your credentials
+# Required variables:
+# - AWS_REGION
+# - QBO_SECRET_NAME / MSGRAPH_SECRET_NAME (for AWS Secrets Manager)
+# - Or individual credentials if not using Secrets Manager
 ```
 
 ## Project Structure
 
 ```
 send_qbo_invoices/
-├── template.yaml              # SAM template defining both Lambda functions
-├── requirements.txt           # Python dependencies
-├── send_invoices/            # Lambda 1: Daily invoice sending
-│   └── app.py                # Handler: send_invoices.app.lambda_handler
-├── create_invoices/          # Lambda 2: Monthly invoice creation
-│   └── app.py                # Handler: create_invoices.app.lambda_handler
-├── shared/                   # Shared modules used by both functions
-│   ├── process_and_send_qbo_invoices.py  # Main orchestration logic
+├── Dockerfile                 # Docker container definition
+├── docker-compose.yml         # Docker Compose configuration
+├── entrypoint.py             # Main entry point for Docker container
+├── requirements.txt          # Python dependencies
+├── .env.template            # Environment variable template
+├── .env                     # Local environment variables (git-ignored)
+├── shared/                  # Shared modules
+│   ├── process_and_send_qbo_invoices.py  # Send invoices orchestration
+│   ├── task_minutes_to_clickup_and_qbo.py # Create invoices from ClickUp
 │   ├── apd_quickbooksonline.py           # QBO API wrapper
 │   ├── apd_msgraph_v2.py                 # Microsoft Graph API wrapper
 │   └── apd_common.py                     # HTML template processor
@@ -81,21 +80,22 @@ send_qbo_invoices/
 
 ## Architecture
 
-### Lambda Functions
+### Docker Services
 
-#### SendInvoicesFunction
-- **Trigger**: Daily at 5 PM Pacific (EventBridge Schedule) + API Gateway
-- **Handler**: `send_invoices.app.lambda_handler`
+#### send-invoices
 - **Purpose**: Queries QBO for today's invoices, sends them, emails summary to bookkeeper
+- **Entry Point**: `entrypoint.py send-invoices`
+- **Core Function**: `send_qbo_invoices()` from `process_and_send_qbo_invoices.py`
 
-#### CreateInvoicesFunction
-- **Trigger**: Monthly on 8th at 9 AM Pacific (EventBridge Schedule) + API Gateway
-- **Handler**: `create_invoices.app.lambda_handler`
-- **Purpose**: Creates invoices from recurring transactions (implementation pending)
+#### create-invoices
+- **Purpose**: Creates invoices from recurring transactions (ClickUp task minutes)
+- **Entry Point**: `entrypoint.py create-invoices`
+- **Core Function**: `process_all_clients()` from `task_minutes_to_clickup_and_qbo.py`
 
 ### Core Modules (in `shared/`)
 
 - **process_and_send_qbo_invoices.py** - Main orchestration: queries QBO for today's invoices, sends them, generates summary email
+- **task_minutes_to_clickup_and_qbo.py** - Creates invoices from ClickUp task minutes for billing period
 - **apd_quickbooksonline.py** - QuickBooks Online API wrapper with OAuth token refresh, retry logic, and custom exceptions (QBOError, QBOAuthError, etc.)
 - **apd_msgraph_v2.py** - Microsoft Graph API wrapper for sending emails via Office 365
 - **apd_common.py** - HTML template processor (`APD_Html_Template` class)
@@ -106,16 +106,27 @@ send_qbo_invoices/
   - QBO credentials are automatically updated when refresh tokens are rotated
 - **QuickBooks Online API** - Invoice queries and sending
 - **Microsoft Graph API** - Email delivery
+- **ClickUp API** - Task minutes data retrieval
 
 ### Configuration
 
-Environment variables in `template.yaml`:
-- `QBO_SECRET_NAME`: AWS Secrets Manager path for QBO credentials (client_id, client_secret, realm_id, refresh_token, access_token)
-- `MSGRAPH_SECRET_NAME`: AWS Secrets Manager path for Microsoft Graph credentials (tenant_id, client_id, client_secret_value, sharepoint_hostname)
+Environment variables (defined in `.env` file):
+- `FUNCTION_NAME`: Which function to run (`send-invoices` or `create-invoices`)
+- `AWS_REGION`: AWS region for Secrets Manager (default: `us-west-2`)
+- `QBO_SECRET_NAME`: AWS Secrets Manager path for QBO credentials
+- `MSGRAPH_SECRET_NAME`: AWS Secrets Manager path for Microsoft Graph credentials
+- `EXCLUDED_CUSTOMERS`: Comma-separated list of customer names to exclude from invoice sending
+- `BOOKKEEPER_EMAIL`: Email address for daily summary reports
+- `SENDER_EMAIL`: Email address used as sender for notifications
 
 ## Important Notes
 
-- Both functions use `CodeUri: .` (root directory) with shared modules
-- Scheduled triggers are disabled by default (`Enabled: false`)
-- Manual triggering available via API Gateway endpoints
+- Docker container uses Python 3.11 slim base image
+- Code changes require rebuilding the Docker image (`docker-compose build`)
+- `.env` file contains sensitive credentials and is git-ignored
 - QBO refresh tokens are automatically saved back to Secrets Manager after rotation
+- Logs are written to `logs/` directory (git-ignored)
+
+## Deployment
+
+For production deployment to AWS ECS, see [README.ECS-DEPLOYMENT.md](README.ECS-DEPLOYMENT.md)

@@ -10,14 +10,14 @@ import os
 import json
 
 def send_qbo_invoices() -> bool:
-    # Configure logging for Lambda/local execution
+    # Configure logging
     logging.basicConfig(
         level=logging.INFO,
         format='%(levelname)s: %(message)s',
         force=True  # Force reconfiguration even if already configured
     )
 
-    # Path to assets folder (Lambda runs from function directory, assets is at parent level)
+    # Path to assets folder
     email_path = os.path.join(os.path.dirname(__file__), '..', 'assets', 'sent_invoices_email_template.html')
     aws_region = os.environ.get("AWS_REGION", "us-west-2")
     excluded_customers = [customer.strip() for customer in os.environ.get("EXCLUDED_CUSTOMERS", "").split(",") if customer.strip()]

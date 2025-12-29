@@ -86,7 +86,7 @@ BILLING_CONFIG = BillingPeriodConfig(
 )
 
 def process_all_clients():
-    # Configure logging for Lambda/local execution
+    # Configure logging
     logging.basicConfig(
         level=logging.INFO,
         format='%(levelname)s: %(message)s',
