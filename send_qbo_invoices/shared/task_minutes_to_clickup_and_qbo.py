@@ -32,15 +32,19 @@ UPPER_CLIENT_ID = int(os.environ.get("UPPER_CLIENT_ID", "20030"))
 NET_30_DAYS_CLIENTS = os.environ.get("NET_30_DAYS_CLIENTS", "").split(",")
 
 def get_billing_reference_date() -> datetime:
-    """Get billing reference date from environment variable or default to first day of current month."""
+    """Get billing reference date from environment variable or default to first day of prior month."""
     reference_date_str = os.environ.get("BILLING_REFERENCE_DATE", "")
     if reference_date_str:
         # Parse format: YYYY-MM-DD
         return datetime.strptime(reference_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     else:
-        # Default to first day of current month
+        # Default to first day of prior month
         now = datetime.now(timezone.utc)
-        return datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+        # Subtract one month by going to first of current month, then subtracting one day
+        first_of_current_month = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+        from datetime import timedelta
+        last_of_prior_month = first_of_current_month - timedelta(days=1)
+        return datetime(last_of_prior_month.year, last_of_prior_month.month, 1, tzinfo=timezone.utc)
 
 
 # Constants
@@ -186,6 +190,7 @@ def process_all_clients():
         )
         
         print("=====================================")
+    logging.info("Completed ClickUp and QBO process...")
     return True
 
 def send_files_to_sharepoint(msgraph_instance: msgraph.MsGraph, client_number: str, assistant_export_file_stream: str, unattended_export_file_stream: str, report_datastream: str):
