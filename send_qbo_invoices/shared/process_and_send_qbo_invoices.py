@@ -34,21 +34,21 @@ def send_qbo_invoices() -> bool:
     # Get secrets and intialize instances
     try:
         aws_secretsmanager = boto3.client("secretsmanager", region_name=aws_region)
-        msgraph_vault = apd_common.get_secrets("MSGRAPH_SECRET_NAME", aws_secretsmanager)
         quickbooks_online_vault = apd_common.get_secrets("QBO_SECRET_NAME", aws_secretsmanager)
+        quickbooks_online_instance = quickbooks_online.QuickBooksOnline(quickbooks_online_vault)
+        # Write tokens back to secrets manager
+        apd_common.update_secret("QBO_SECRET_NAME", quickbooks_online_instance.vault_values, aws_secretsmanager)
+        msgraph_vault = apd_common.get_secrets("MSGRAPH_SECRET_NAME", aws_secretsmanager)
         msgraph_instance = msgraph.MsGraph(
             tenant=msgraph_vault["tenant_id"],
             client_id=msgraph_vault["client_id"],
             client_secret=msgraph_vault["client_secret_value"],
             hostname=msgraph_vault["hostname"]
         )
-        quickbooks_online_instance = quickbooks_online.QuickBooksOnline(quickbooks_online_vault)
     except Exception as e:
         logging.error(f"Failed to initialize instances: {e}")
         return False
 
-    # Write tokens back to secrets manager
-    apd_common.update_secret("QBO_SECRET_NAME", quickbooks_online_instance.vault_values, aws_secretsmanager)
 
     # Get invoices for today
     query = f"select * from Invoice where TxnDate = '{current_date}'"
