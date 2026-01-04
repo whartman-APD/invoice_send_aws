@@ -83,6 +83,11 @@ class BillingPeriodConfig:
     def sharepoint_file_date(self) -> str:
         """Format: YYYY-M (e.g., '2025-9')"""
         return self.prior_period_start.strftime("%Y-%-m" if os.name != "nt" else "%Y-%#m")
+    
+    @property
+    def sharepoint_report_date(self) -> str:
+        """Format: Month YYYY (e.g., 'September 2025')"""
+        return self.current_period_start.strftime("%Y-%-m" if os.name != "nt" else "%Y-%#m")
 
 # Initialize billing configuration
 BILLING_CONFIG = BillingPeriodConfig(
@@ -207,6 +212,7 @@ def send_files_to_sharepoint(msgraph_instance: msgraph.MsGraph, client_number: s
                 BASE_PATH,
                 attended_export_filename,
                 assistant_export_file_stream,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )    
         # Upload unattended processes file
         unattended_export_filename = client_number + "_unattended_processes_" + BILLING_CONFIG.sharepoint_file_date + ".xlsx"
@@ -215,6 +221,7 @@ def send_files_to_sharepoint(msgraph_instance: msgraph.MsGraph, client_number: s
                 BASE_PATH,
                 unattended_export_filename,
                 unattended_export_file_stream,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
     
         # Upload the files to the subfolder
@@ -224,6 +231,7 @@ def send_files_to_sharepoint(msgraph_instance: msgraph.MsGraph, client_number: s
                 BASE_PATH,
                 report_filename,
                 report_datastream,
+                "application/pdf"
             )
 
 def attach_detail_runtime_to_invoice(quickbooks_online_vault: dict[str, str], invoice_json: dict[str, str]|None, report_datastream: str):
@@ -435,6 +443,7 @@ def get_unattended_data_from_spreadsheet(unattended_data:pandas.DataFrame, clien
         with pandas.ExcelWriter(export_file_stream, engine="openpyxl") as writer:
             unattended_data_for_organization.to_excel(writer, index=False, sheet_name="Unattended Processes")
 
+    export_file_stream.seek(0)
     return total_runtime_prior_month_unattended, export_file_stream, organization_name
 
 def get_unattended_runs(workspace_id: str, header: dict[str, str]) -> pandas.DataFrame:
