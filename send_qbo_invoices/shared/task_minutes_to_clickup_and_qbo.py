@@ -225,17 +225,18 @@ def send_files_to_sharepoint(msgraph_instance: msgraph.MsGraph, client_number: s
             )
     
         # Upload the files to the subfolder
-        report_filename = client_number + "_runtime_report_" + BILLING_CONFIG.sharepoint_file_date + ".pdf"
+        report_filename = client_number + "_runtime_report_" + BILLING_CONFIG.sharepoint_file_date + ".xlsx"
         msgraph_instance.upload_file_to_sharepoint(
                 drive_id,
                 BASE_PATH,
                 report_filename,
                 report_datastream,
-                "application/pdf"
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-def attach_detail_runtime_to_invoice(quickbooks_online_vault: dict[str, str], invoice_json: dict[str, str]|None, report_datastream: str):
+def attach_detail_runtime_to_invoice(quickbooks_online_vault: dict[str, str], invoice_json: dict[str, str]|None, report_datastream: io.BytesIO):
     # Get the invoice ID from the response
+    report_datastream.seek(0)
     if invoice_json is None:
         print("No invoice JSON returned. Skipping attachment.")
         return
@@ -243,7 +244,8 @@ def attach_detail_runtime_to_invoice(quickbooks_online_vault: dict[str, str], in
     print(f"Invoice ID: {invoice_id}")
 
     quickbooks_online_instance = quickbooks_online.QuickBooksOnline(quickbooks_online_vault)
-    quickbooks_online_instance.upload_attachment(report_datastream, "invoice.pdf", "Invoice", invoice_id, content_type="application/pdf")
+    quickbooks_online_instance.upload_attachment(report_datastream, "Runtime Detail.xlsx", "Invoice", invoice_id, content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    report_datastream.seek(0)
 
     print(f"Attached report to invoice {invoice_id} in QuickBooks Online.")
 
