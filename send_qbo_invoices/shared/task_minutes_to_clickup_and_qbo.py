@@ -81,8 +81,10 @@ class BillingPeriodConfig:
     
     @property
     def sharepoint_file_date(self) -> str:
-        """Format: YYYY-M (e.g., '2025-9')"""
-        return self.prior_period_start.strftime("%Y-%-m" if os.name != "nt" else "%Y-%#m")
+        """Format: YYYY-M with zero-indexed month for Robocorp (e.g., '2025-0' for January 2025)"""
+        year = self.prior_period_start.year
+        month = self.prior_period_start.month - 1  # Zero-indexed for Robocorp
+        return f"{year}-{month}"
     
     @property
     def sharepoint_report_date(self) -> str:
@@ -206,7 +208,7 @@ def send_files_to_sharepoint(msgraph_instance: msgraph.MsGraph, client_number: s
     
     if UPLOAD_TO_SHAREPOINT:
         # Upload the files to the subfolder
-        attended_export_filename = client_number + "_assistant_processes_" + BILLING_CONFIG.sharepoint_file_date + ".xlsx"
+        attended_export_filename = client_number + "_assistant_processes_" + BILLING_CONFIG.sharepoint_report_date + ".xlsx"
         msgraph_instance.upload_file_to_sharepoint(
                 drive_id,
                 BASE_PATH,
@@ -215,7 +217,7 @@ def send_files_to_sharepoint(msgraph_instance: msgraph.MsGraph, client_number: s
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )    
         # Upload unattended processes file
-        unattended_export_filename = client_number + "_unattended_processes_" + BILLING_CONFIG.sharepoint_file_date + ".xlsx"
+        unattended_export_filename = client_number + "_unattended_processes_" + BILLING_CONFIG.sharepoint_report_date + ".xlsx"
         msgraph_instance.upload_file_to_sharepoint(
                 drive_id,
                 BASE_PATH,
@@ -225,7 +227,7 @@ def send_files_to_sharepoint(msgraph_instance: msgraph.MsGraph, client_number: s
             )
     
         # Upload the files to the subfolder
-        report_filename = client_number + "_runtime_report_" + BILLING_CONFIG.sharepoint_file_date + ".xlsx"
+        report_filename = client_number + "_runtime_report_" + BILLING_CONFIG.sharepoint_report_date + ".xlsx"
         msgraph_instance.upload_file_to_sharepoint(
                 drive_id,
                 BASE_PATH,
@@ -758,6 +760,7 @@ def get_site_id_and_drive_id(msgraph_instance: msgraph.MsGraph, site_name: str, 
 
 def get_unattended_data_from_sharepoint(msgraph_instance:msgraph.MsGraph) -> pandas.DataFrame:
     unattended_spreadsheet = f'account-usage-a4db96d0-2dbb-481e-b35a-4629ff252457-{BILLING_CONFIG.sharepoint_file_date}.csv'
+    logging.info(f"Retrieving unattended data from SharePoint file: {unattended_spreadsheet}")
     
     # Get the site ID and drive ID for the Sharepoint site
     _, drive_id = get_site_id_and_drive_id(msgraph_instance, SHAREPOINT_SITE_NAME, DOCUMENT_LIBRARY_NAME)
