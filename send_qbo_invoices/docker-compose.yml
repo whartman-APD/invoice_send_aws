@@ -6,14 +6,11 @@ services:
     image: qbo-invoice-processor:latest
     container_name: qbo-invoice-processor
 
-    # Mount AWS credentials from host machine (read-write for SSO token refresh)
-    volumes:
-      - ~/.aws:/root/.aws
-
     # Environment variables from .env file
     environment:
-      # AWS Configuration
-      - AWS_PROFILE=${AWS_PROFILE:-default}
+      # AWS Configuration (using IAM credentials from .env)
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_REGION=${AWS_REGION:-us-west-2}
 
       # AWS Secrets Manager Secret Names
@@ -40,3 +37,9 @@ services:
       - LOWER_CLIENT_ID=${LOWER_CLIENT_ID:-10000}
       - UPPER_CLIENT_ID=${UPPER_CLIENT_ID:-20030}
       - NET_30_DAYS_CLIENTS=${NET_30_DAYS_CLIENTS:-10020}
+
+      # Azure SQL Server Configuration
+      - AZURE_SQL_SERVER=${AZURE_SQL_SERVER}
+      - AZURE_SQL_DATABASE=${AZURE_SQL_DATABASE}
+      - AZURE_SQL_USERNAME=${AZURE_SQL_USERNAME}
+      - AZURE_SQL_PASSWORD=${AZURE_SQL_PASSWORD}

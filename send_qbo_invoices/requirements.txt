@@ -29,3 +29,4 @@ types-s3transfer==0.15.0
 tzdata==2025.2
 urllib3==2.5.0
 xlsxwriter==3.2.9
+pyodbc==5.2.0
