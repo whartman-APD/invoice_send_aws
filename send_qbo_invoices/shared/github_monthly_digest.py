@@ -24,8 +24,8 @@ GITHUB_REPO   = "APD_Code_Libraries"
 GITHUB_BRANCH = "main"
 
 # ── Email Config ──────────────────────────────────────────────────────────────
-EMAIL_FROM = "whartman@automatapracdev.com"
-EMAIL_TO   = "whartman@automatapracdev.com"
+EMAIL_FROM = os.environ.get("MONTHLY_DIGEST_EMAIL_FROM", "whartman@automatapracdev.com")
+EMAIL_TO   = os.environ.get("MONTHLY_DIGEST_EMAIL_TO", "whartman@automatapracdev.com")
 # ─────────────────────────────────────────────────────────────────────────────
 
 
