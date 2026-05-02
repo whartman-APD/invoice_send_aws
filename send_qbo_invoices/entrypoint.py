@@ -15,6 +15,7 @@ import argparse
 from process_and_send_qbo_invoices import send_qbo_invoices
 from task_minutes_to_clickup_and_qbo import process_all_clients
 from sync_robocorp_processes import sync_robocorp_processes_to_sql
+from github_monthly_digest import github_monthly_digest
 
 
 def setup_logging():
@@ -50,11 +51,16 @@ def main():
         action='store_true',
         help='Sync Robocorp process/assistant data to Azure SQL Server'
     )
+    parser.add_argument(
+        '--github-digest',
+        action='store_true',
+        help='Send monthly GitHub commit digest email'
+    )
 
     args = parser.parse_args()
 
     # Validate that exactly one action is specified
-    actions = [args.send_invoices, args.create_invoices, args.sync_processes]
+    actions = [args.send_invoices, args.create_invoices, args.sync_processes, args.github_digest]
     if sum(actions) == 0:
         logger.error("Error: You must specify one action: --send-invoices, --create-invoices, or --sync-processes")
         parser.print_help()
@@ -84,6 +90,12 @@ def main():
             logger.info("Starting: Sync Robocorp Processes to Azure SQL")
             logger.info("=" * 60)
             success = sync_robocorp_processes_to_sql()
+
+        elif args.github_digest:
+            logger.info("=" * 60)
+            logger.info("Starting: GitHub Monthly Digest Email")
+            logger.info("=" * 60)
+            success = github_monthly_digest()
 
         # Exit with appropriate status code
         if success:

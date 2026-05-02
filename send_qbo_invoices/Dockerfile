@@ -22,8 +22,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY shared/ ./shared/
 COPY assets/ ./assets/
-COPY send_invoices/ ./send_invoices/
-COPY create_invoices/ ./create_invoices/
 COPY entrypoint.py .
 
 # Set PYTHONPATH to include shared modules
