@@ -1,7 +1,7 @@
 """
 GitHub Monthly Digest
 - Secrets via AWS Secrets Manager
-- Commits from GitHub REST API
+- PRs merged last month from GitHub REST API
 - AI summary via Azure OpenAI
 - Email via Microsoft Graph API (apd_msgraph_v2 wrapper)
 
@@ -29,28 +29,40 @@ EMAIL_TO   = "whartman@automatapracdev.com"
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def get_commits_last_month(pat: str) -> list[dict]:
-    """Fetch commits to main branch from the past calendar month."""
+def _gh_headers(pat: str) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {pat}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+
+def resolve_login(pat: str, login: str, cache: dict[str, str]) -> str:
+    if login in cache:
+        return cache[login]
+    try:
+        resp = requests.get(f"https://api.github.com/users/{login}", headers=_gh_headers(pat))
+        resp.raise_for_status()
+        name = resp.json().get("name") or login
+    except Exception:
+        name = login
+    cache[login] = name
+    return name
+
+
+def get_prs_last_month(pat: str) -> list[dict[str, str]]:
+    """Fetch PRs merged into main during the past calendar month, with reviewer info."""
     now = datetime.now(timezone.utc)
     since = (now - relativedelta(months=1)).replace(
         day=1, hour=0, minute=0, second=0, microsecond=0
     )
     until = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
-    url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/commits"
-    headers = {
-        "Authorization": f"Bearer {pat}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-    params = {
-        "sha": GITHUB_BRANCH,
-        "since": since.isoformat(),
-        "until": until.isoformat(),
-        "per_page": 100,
-    }
+    headers = _gh_headers(pat)
+    url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/pulls"
+    params = {"state": "closed", "base": GITHUB_BRANCH, "per_page": 100}
 
-    commits = []
+    prs = []
     page = 1
     while True:
         params["page"] = page
@@ -59,50 +71,57 @@ def get_commits_last_month(pat: str) -> list[dict]:
         batch = resp.json()
         if not batch:
             break
-        commits.extend(batch)
+        for pr in batch:
+            merged_at = pr.get("merged_at")
+            if not merged_at:
+                continue
+            merged_dt = datetime.fromisoformat(merged_at.replace("Z", "+00:00"))
+            if since <= merged_dt < until:
+                prs.append(pr)
+            elif merged_dt < since:
+                return prs
         page += 1
 
-    return commits
+    return prs
 
 
-def resolve_display_names(pat: str, commits: list[dict]) -> dict[str, str]:
-    """Resolve GitHub logins to display names via the Users API. Returns {login: display_name}."""
-    headers = {
-        "Authorization": f"Bearer {pat}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-    logins: set[str] = set()
-    for c in commits:
-        author_obj = c.get("author")
-        if author_obj and author_obj.get("login"):
-            logins.add(author_obj["login"])
-
-    name_map: dict[str, str] = {}
-    for login in logins:
-        try:
-            resp = requests.get(f"https://api.github.com/users/{login}", headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-            name_map[login] = data.get("name") or login
-        except Exception:
-            name_map[login] = login
-    return name_map
-
-
-def build_commit_text(commits: list[dict[str, str]], name_map: dict[str, str]) -> str:
+def build_pr_text(pat: str, prs: list[dict[str, str]]) -> str:
+    """Build structured PR text for the AI prompt, with resolved display names."""
+    name_cache: dict[str, str] = {}
     lines = []
-    for c in commits:
-        login = c.get("author", {}).get("login", "") if c.get("author") else ""
-        author = name_map.get(login) or c["commit"]["author"]["name"]
-        date   = c["commit"]["author"]["date"][:10]
-        msg    = c["commit"]["message"].split("\n")[0]
-        lines.append(f"- [{date}] {author}: {msg}")
+
+    for pr in prs:
+        title = pr["title"]
+        number = pr["number"]
+        author_login = pr["user"]["login"]
+        author_name = resolve_login(pat, author_login, name_cache)
+
+        # Fetch approved reviewers
+        reviews_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/pulls/{number}/reviews"
+        try:
+            rev_resp = requests.get(reviews_url, headers=_gh_headers(pat))
+            rev_resp.raise_for_status()
+            reviewed_logins: set[str] = {
+                r["user"]["login"]
+                for r in rev_resp.json()
+                if r.get("state") == "APPROVED" and r["user"]["login"] != author_login
+            }
+            reviewer_names = [
+                resolve_login(pat, login, name_cache)
+                for login in sorted(reviewed_logins)
+            ]
+        except Exception:
+            reviewer_names = []
+
+        reviewers_str = ", ".join(reviewer_names) if reviewer_names else ""
+        body = (pr.get("body") or "").strip()
+        lines.append(f"PR #{number}: {title} | Author: {author_name} | Reviewers: {reviewers_str} | Description: {body}")
+
     return "\n".join(lines)
 
 
-def generate_summary(openai_vault: dict[str, str], commit_text: str, month_label: str) -> str:
-    """Call Azure OpenAI to write a non-technical monthly summary."""
+def generate_summary(openai_vault: dict[str, str], pr_text: str, month_label: str) -> str:
+    """Call Azure OpenAI to produce an HTML table summary from PR data."""
     endpoint    = openai_vault["AZURE_OPENAI_ENDPOINT"].rstrip("/")
     deployment  = openai_vault["AZURE_OPENAI_DEPLOYMENT"]
     api_version = openai_vault["AZURE_OPENAI_API_VERSION"]
@@ -110,30 +129,41 @@ def generate_summary(openai_vault: dict[str, str], commit_text: str, month_label
 
     url = f"{endpoint}/openai/deployments/{deployment}/chat/completions?api-version={api_version}"
 
-    prompt = f"""You are summarizing a month of software development commits for an internal team digest email.
+    prompt = f"""You are summarizing merged pull requests for a monthly internal team digest email.
 
-Analyze the commits and group them by the app or library that was changed (e.g. "Canopy", "MS Graph", "QBO", etc.).
-Infer the app/library name from the commit messages. Do NOT include "APD" in any app or library name — drop it and use only the core name (e.g. "apd_msgraph" becomes "MS Graph", "apd_quickbooksonline" becomes "QuickBooks Online").
+Each PR entry below includes the PR title, the author, and the reviewers as separate fields.
+
+Group the PRs by app or library. Infer the app/library name from the PR description text which will include a list of files changed. Ignore files such as documentation, tests, or configuration files that don't indicate the main app/library. Focus on the core code changes to determine the app/library.
+Do NOT include "APD" in any app or library name — drop it and use only the core name (e.g. "apd_msgraph" becomes "MS Graph", "apd_quickbooksonline" becomes "QuickBooks Online").
 
 Output the email as HTML using this exact structure:
 
 <p>Here are the changes that were made to the APD Code Library.</p>
 
-Then for each app or library, sorted alphabetically by name:
-
-<p><strong>{{App or Library Name}}</strong><br>
-<em>{{Comma-separated list of all unique author display names who committed to this app}}</em></p>
-<ul>
-  <li>{{Capability statement — what the code now does. Focus on new method calls, new features, or new behaviors. Be concise and functional.}}</li>
-</ul>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%;">
+  <thead>
+    <tr style="background-color:#f2f2f2;">
+      <th style="text-align:left;">App / Library</th>
+      <th style="text-align:left;">Author</th>
+      <th style="text-align:left;">Reviewer</th>
+      <th style="text-align:left;">Capabilities</th>
+    </tr>
+  </thead>
+  <tbody>
+    <!-- One <tr> per app/library, sorted alphabetically by app name.
+         Author cell: unique author names from the PR data, one per line separated by <br> — do not infer or change names.
+         Reviewer cell: unique reviewer names from the PR data, one per line separated by <br> — do not infer or change names. Leave blank if none.
+         Capabilities cell: bullet list of what the code now does based on the PR titles. Be concise and functional. -->
+  </tbody>
+</table>
 
 Do not include a subject line, greeting, sign-off, or any prose outside this structure. Output only valid HTML — no markdown, no code fences.
 
 Month: {month_label}
 Repository: {GITHUB_OWNER}/{GITHUB_REPO}
 
-Commits this month:
-{commit_text}"""
+Merged PRs this month:
+{pr_text}"""
 
     resp = requests.post(
         url,
@@ -141,11 +171,16 @@ Commits this month:
         json={
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 1024,
-            "temperature": 0.7,
+            "temperature": 0,
         },
     )
     resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"]
+    content = resp.json()["choices"][0]["message"]["content"].strip()
+    if content.startswith("```"):
+        content = content.split("\n", 1)[-1]
+    if content.endswith("```"):
+        content = content.rsplit("```", 1)[0]
+    return content.strip()
 
 
 def github_monthly_digest() -> bool:
@@ -175,17 +210,17 @@ def github_monthly_digest() -> bool:
     last_month = now - relativedelta(months=1)
     month_label = last_month.strftime("%B %Y")
 
-    logging.info(f"Fetching commits for {month_label}...")
-    commits = get_commits_last_month(github_vault["GITHUB_PAT"])
-    if not commits:
-        logging.info(f"No commits found for {month_label}. Skipping email.")
+    logging.info(f"Fetching PRs merged in {month_label}...")
+    pat = github_vault["GITHUB_PAT"]
+    prs = get_prs_last_month(pat)
+    if not prs:
+        logging.info(f"No merged PRs found for {month_label}. Skipping email.")
         return True
 
-    logging.info(f"Found {len(commits)} commits. Resolving author names...")
-    name_map = resolve_display_names(github_vault["GITHUB_PAT"], commits)
+    logging.info(f"Found {len(prs)} PRs. Resolving authors and reviewers...")
+    pr_text = build_pr_text(pat, prs)
     logging.info("Generating summary...")
-    commit_text = build_commit_text(commits, name_map)
-    summary = generate_summary(openai_vault, commit_text, month_label)
+    summary = generate_summary(openai_vault, pr_text, month_label)
 
     subject = f"Monthly Code Update - {month_label} | {GITHUB_REPO}"
     email_payload = {
