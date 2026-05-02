@@ -65,10 +65,36 @@ def get_commits_last_month(pat: str) -> list[dict]:
     return commits
 
 
-def build_commit_text(commits: list[dict]) -> str:
+def resolve_display_names(pat: str, commits: list[dict]) -> dict[str, str]:
+    """Resolve GitHub logins to display names via the Users API. Returns {login: display_name}."""
+    headers = {
+        "Authorization": f"Bearer {pat}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    logins: set[str] = set()
+    for c in commits:
+        author_obj = c.get("author")
+        if author_obj and author_obj.get("login"):
+            logins.add(author_obj["login"])
+
+    name_map: dict[str, str] = {}
+    for login in logins:
+        try:
+            resp = requests.get(f"https://api.github.com/users/{login}", headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            name_map[login] = data.get("name") or login
+        except Exception:
+            name_map[login] = login
+    return name_map
+
+
+def build_commit_text(commits: list[dict[str, str]], name_map: dict[str, str]) -> str:
     lines = []
     for c in commits:
-        author = c["commit"]["author"]["name"]
+        login = c.get("author", {}).get("login", "") if c.get("author") else ""
+        author = name_map.get(login) or c["commit"]["author"]["name"]
         date   = c["commit"]["author"]["date"][:10]
         msg    = c["commit"]["message"].split("\n")[0]
         lines.append(f"- [{date}] {author}: {msg}")
@@ -84,20 +110,30 @@ def generate_summary(openai_vault: dict[str, str], commit_text: str, month_label
 
     url = f"{endpoint}/openai/deployments/{deployment}/chat/completions?api-version={api_version}"
 
-    prompt = f"""You are writing a monthly development update email for an accounting firm's
-internal team. The audience is non-technical — account managers and client-facing staff who
-want to understand what improvements were made to the firm's software tools this month.
+    prompt = f"""You are summarizing a month of software development commits for an internal team digest email.
 
-Write a clear, friendly summary (3-5 short paragraphs) of what was worked on and why it
-matters to clients. Avoid technical jargon. Group related changes where possible.
+Analyze the commits and group them by the app or library that was changed (e.g. "Canopy", "MS Graph", "QBO", etc.).
+Infer the app/library name from the commit messages. Do NOT include "APD" in any app or library name — drop it and use only the core name (e.g. "apd_msgraph" becomes "MS Graph", "apd_quickbooksonline" becomes "QuickBooks Online").
+
+Output the email as HTML using this exact structure:
+
+<p>Here are the changes that were made to the APD Code Library.</p>
+
+Then for each app or library, sorted alphabetically by name:
+
+<p><strong>{{App or Library Name}}</strong><br>
+<em>{{Comma-separated list of all unique author display names who committed to this app}}</em></p>
+<ul>
+  <li>{{Capability statement — what the code now does. Focus on new method calls, new features, or new behaviors. Be concise and functional.}}</li>
+</ul>
+
+Do not include a subject line, greeting, sign-off, or any prose outside this structure. Output only valid HTML — no markdown, no code fences.
 
 Month: {month_label}
 Repository: {GITHUB_OWNER}/{GITHUB_REPO}
 
 Commits this month:
-{commit_text}
-
-Write only the email body — no subject line, no greeting, no sign-off."""
+{commit_text}"""
 
     resp = requests.post(
         url,
@@ -145,15 +181,17 @@ def github_monthly_digest() -> bool:
         logging.info(f"No commits found for {month_label}. Skipping email.")
         return True
 
-    logging.info(f"Found {len(commits)} commits. Generating summary...")
-    commit_text = build_commit_text(commits)
+    logging.info(f"Found {len(commits)} commits. Resolving author names...")
+    name_map = resolve_display_names(github_vault["GITHUB_PAT"], commits)
+    logging.info("Generating summary...")
+    commit_text = build_commit_text(commits, name_map)
     summary = generate_summary(openai_vault, commit_text, month_label)
 
     subject = f"Monthly Code Update - {month_label} | {GITHUB_REPO}"
     email_payload = {
         "message": {
             "subject": subject,
-            "body": {"contentType": "Text", "content": summary},
+            "body": {"contentType": "HTML", "content": summary},
             "toRecipients": [
                 {"emailAddress": {"address": addr.strip()}}
                 for addr in EMAIL_TO.split(",")
