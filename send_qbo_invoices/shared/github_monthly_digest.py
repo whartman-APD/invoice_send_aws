@@ -146,14 +146,14 @@ Output the email as HTML using this exact structure:
       <th style="text-align:left;">App / Library</th>
       <th style="text-align:left;">Author</th>
       <th style="text-align:left;">Reviewer</th>
-      <th style="text-align:left;">Capabilities</th>
+      <th style="text-align:left;">Updates</th>
     </tr>
   </thead>
   <tbody>
     <!-- One <tr> per app/library, sorted alphabetically by app name.
          Author cell: unique author names from the PR data, one per line separated by <br> — do not infer or change names.
          Reviewer cell: unique reviewer names from the PR data, one per line separated by <br> — do not infer or change names. Leave blank if none.
-         Capabilities cell: bullet list of what the code now does based on the PR titles. Be concise and functional. -->
+         Updates cell: bullet list of what the code now does based on the PR titles. Be concise and functional. -->
   </tbody>
 </table>
 
