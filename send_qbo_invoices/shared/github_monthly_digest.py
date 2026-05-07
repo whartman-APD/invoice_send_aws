@@ -13,6 +13,7 @@ import os
 import requests
 import boto3
 import apd_common
+import apd_clickup as clickup
 import apd_msgraph_v2 as msgraph
 from datetime import datetime, timezone
 from dateutil.relativedelta import relativedelta
@@ -183,6 +184,59 @@ Merged PRs this month:
     return content.strip()
 
 
+def generate_markdown_summary(openai_vault: dict[str, str], pr_text: str, month_label: str) -> str:
+    """Call Azure OpenAI to produce a markdown table summary from PR data."""
+    endpoint    = openai_vault["AZURE_OPENAI_ENDPOINT"].rstrip("/")
+    deployment  = openai_vault["AZURE_OPENAI_DEPLOYMENT"]
+    api_version = openai_vault["AZURE_OPENAI_API_VERSION"]
+    api_key     = openai_vault["AZURE_OPENAI_API_KEY"]
+
+    url = f"{endpoint}/openai/deployments/{deployment}/chat/completions?api-version={api_version}"
+
+    prompt = f"""You are summarizing merged pull requests for a monthly internal team digest.
+
+Each PR entry below includes the PR title, the author, the reviewers, and the description.
+
+Group the PRs by app or library. Infer the app/library name from the PR description text which will include a list of files changed. Ignore files such as documentation, tests, or configuration files that don't indicate the main app/library. Focus on the core code changes to determine the app/library.
+Do NOT include "APD" in any app or library name — drop it and use only the core name (e.g. "apd_msgraph" becomes "MS Graph", "apd_quickbooksonline" becomes "QuickBooks Online").
+
+Output a markdown table using this exact structure:
+
+| App / Library | Author | Reviewer | Updates |
+|---|---|---|---|
+| Name | name<br>name | name<br>name | - capability<br>- capability |
+
+Rules:
+- One row per app/library, sorted alphabetically by app name.
+- Author cell: unique author names from the PR data only, one per line separated by <br> — do not infer or change names.
+- Reviewer cell: unique reviewer names from the PR data only, one per line separated by <br> — leave blank if none.
+- Updates cell: concise functional bullets separated by <br> describing what the code now does.
+- Output only the markdown table — no prose, no code fences, no headings.
+
+Month: {month_label}
+Repository: {GITHUB_OWNER}/{GITHUB_REPO}
+
+Merged PRs this month:
+{pr_text}"""
+
+    resp = requests.post(
+        url,
+        headers={"api-key": api_key, "Content-Type": "application/json"},
+        json={
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 1024,
+            "temperature": 0,
+        },
+    )
+    resp.raise_for_status()
+    content = resp.json()["choices"][0]["message"]["content"].strip()
+    if content.startswith("```"):
+        content = content.split("\n", 1)[-1]
+    if content.endswith("```"):
+        content = content.rsplit("```", 1)[0]
+    return content.strip()
+
+
 def github_monthly_digest() -> bool:
     logging.basicConfig(
         level=logging.INFO,
@@ -243,6 +297,25 @@ def github_monthly_digest() -> bool:
         logging.warning("Issues encountered sending email.")
         return False
     logging.info("Email sent successfully.")
+
+    try:
+        clickup_vault = apd_common.get_secrets("CLICKUP_SECRET_NAME", aws_secretsmanager)
+        workspace_id  = os.environ.get("CLICKUP_DIGEST_WORKSPACE_ID", "9009105550")
+        doc_id        = os.environ.get("CLICKUP_DIGEST_DOC_ID", "8cfr2me-7174")
+        page_id       = os.environ.get("CLICKUP_DIGEST_PAGE_ID", "8cfr2me-19254")
+
+        logging.info("Generating markdown summary for ClickUp...")
+        clickup_summary = generate_markdown_summary(openai_vault, pr_text, month_label)
+
+        logging.info("Updating ClickUp page...")
+        page = clickup.get_doc_page(clickup_vault, workspace_id, doc_id, page_id)
+        existing_content = page.get("content", "")
+        new_section = f"## {month_label}\n\n{clickup_summary}\n\n---\n\n"
+        clickup.update_doc_page(clickup_vault, workspace_id, doc_id, page_id, new_section + existing_content)
+        logging.info("ClickUp page updated successfully.")
+    except Exception as e:
+        logging.warning(f"Failed to update ClickUp page: {e}")
+
     return True
 
 

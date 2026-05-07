@@ -282,3 +282,16 @@ def get_custom_dropdown_field_by_name(vault_values, list_id, custom_field_name):
             return field_id, options
     print(f"Custom field not found by name: {custom_field_name}")
     return None
+
+def get_doc_page(vault_values: dict, workspace_id: str, doc_id: str, page_id: str) -> dict:
+    url = f"https://api.clickup.com/api/v3/workspaces/{workspace_id}/docs/{doc_id}/pages/{page_id}"
+    headers = {"Authorization": vault_values["token"]}
+    resp = requests.get(url, headers=headers)
+    resp.raise_for_status()
+    return resp.json()
+
+def update_doc_page(vault_values: dict, workspace_id: str, doc_id: str, page_id: str, content: str):
+    url = f"https://api.clickup.com/api/v3/workspaces/{workspace_id}/docs/{doc_id}/pages/{page_id}"
+    headers = {"Authorization": vault_values["token"], "Content-Type": "application/json"}
+    resp = requests.put(url, headers=headers, json={"content": content})
+    resp.raise_for_status()
