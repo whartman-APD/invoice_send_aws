@@ -200,18 +200,20 @@ Each PR entry below includes the PR title, the author, the reviewers, and the de
 Group the PRs by app or library. Infer the app/library name from the PR description text which will include a list of files changed. Ignore files such as documentation, tests, or configuration files that don't indicate the main app/library. Focus on the core code changes to determine the app/library.
 Do NOT include "APD" in any app or library name — drop it and use only the core name (e.g. "apd_msgraph" becomes "MS Graph", "apd_quickbooksonline" becomes "QuickBooks Online").
 
-Output a markdown table using this exact structure:
+Output markdown blocks using this exact structure for each app/library, sorted alphabetically by name:
 
-| App / Library | Author | Reviewer | Updates |
-|---|---|---|---|
-| Name | name<br>name | name<br>name | - capability<br>- capability |
+**{{App / Library Name}}**
+Author: {{unique author names, comma-separated}}
+Reviewer: {{unique reviewer names, comma-separated — omit this line if none}}
+- {{Capability bullet — what the code now does. Be concise and functional.}}
 
 Rules:
-- One row per app/library, sorted alphabetically by app name.
-- Author cell: unique author names from the PR data only, one per line separated by <br> — do not infer or change names.
-- Reviewer cell: unique reviewer names from the PR data only, one per line separated by <br> — leave blank if none.
-- Updates cell: concise functional bullets separated by <br> describing what the code now does.
-- Output only the markdown table — no prose, no code fences, no headings.
+- One block per app/library, sorted alphabetically by app name.
+- Author: unique author names from the PR data only — do not infer or change names.
+- Reviewer: unique reviewer names from the PR data only — omit the line entirely if there are no reviewers.
+- Bullets: one per distinct capability, concise and functional.
+- Separate each block with a blank line.
+- Output only the markdown blocks — no prose, no table, no code fences, no headings.
 
 Month: {month_label}
 Repository: {GITHUB_OWNER}/{GITHUB_REPO}
