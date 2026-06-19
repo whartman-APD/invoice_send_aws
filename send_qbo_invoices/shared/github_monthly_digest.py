@@ -1,11 +1,11 @@
 """
-GitHub Monthly Digest
+GitHub Weekly Digest
 - Secrets via AWS Secrets Manager
-- PRs merged last month from GitHub REST API
+- PRs merged in the last 7 days from GitHub REST API
 - AI summary via Azure OpenAI
 - Email via Microsoft Graph API (apd_msgraph_v2 wrapper)
 
-Schedule: Last day of each month via Windows Task Scheduler.
+Schedule: Weekly on Monday at 1 AM via Windows Task Scheduler.
 """
 
 import logging
@@ -30,6 +30,26 @@ EMAIL_TO   = os.environ.get("MONTHLY_DIGEST_EMAIL_TO", "whartman@automatapracdev
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+AGENTS_DIR = os.path.join(os.path.dirname(__file__), "..", "assets", "agents")
+
+
+def _load_prompt(filename: str, **values: str) -> str:
+    """Load a prompt markdown file from assets/agents and fill in {placeholders}."""
+    path = os.path.join(AGENTS_DIR, filename)
+    with open(path, "r", encoding="utf-8") as f:
+        template = f.read()
+    return template.format(**values)
+
+
+def _format_week_range(start: datetime, end: datetime) -> str:
+    """Format a date range as e.g. 'Jun 9-15, 2026' or 'Dec 29, 2025-Jan 4, 2026'."""
+    if start.year == end.year and start.month == end.month:
+        return f"{start.strftime('%b')} {start.day}-{end.day}, {end.year}"
+    if start.year == end.year:
+        return f"{start.strftime('%b')} {start.day}-{end.strftime('%b')} {end.day}, {end.year}"
+    return f"{start.strftime('%b')} {start.day}, {start.year}-{end.strftime('%b')} {end.day}, {end.year}"
+
+
 def _gh_headers(pat: str) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {pat}",
@@ -51,13 +71,11 @@ def resolve_login(pat: str, login: str, cache: dict[str, str]) -> str:
     return name
 
 
-def get_prs_last_month(pat: str) -> list[dict[str, str]]:
-    """Fetch PRs merged into main during the past calendar month, with reviewer info."""
+def get_prs_last_week(pat: str) -> list[dict[str, str]]:
+    """Fetch PRs merged into main during the past 7 days, with reviewer info."""
     now = datetime.now(timezone.utc)
-    since = (now - relativedelta(months=1)).replace(
-        day=1, hour=0, minute=0, second=0, microsecond=0
-    )
-    until = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    since = now - relativedelta(days=7)
+    until = now
 
     headers = _gh_headers(pat)
     url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/pulls"
@@ -121,7 +139,7 @@ def build_pr_text(pat: str, prs: list[dict[str, str]]) -> str:
     return "\n".join(lines)
 
 
-def generate_summary(openai_vault: dict[str, str], pr_text: str, month_label: str) -> str:
+def generate_summary(openai_vault: dict[str, str], pr_text: str, week_label: str) -> str:
     """Call Azure OpenAI to produce an HTML table summary from PR data."""
     endpoint    = openai_vault["AZURE_OPENAI_ENDPOINT"].rstrip("/")
     deployment  = openai_vault["AZURE_OPENAI_DEPLOYMENT"]
@@ -130,39 +148,13 @@ def generate_summary(openai_vault: dict[str, str], pr_text: str, month_label: st
 
     url = f"{endpoint}/openai/deployments/{deployment}/chat/completions?api-version={api_version}"
 
-    prompt = f"""You are summarizing merged pull requests for a monthly internal team digest email.
-
-Each PR entry below includes the PR title, the author, and the reviewers as separate fields.
-
-Group the PRs by app or library. Infer the app/library name from the PR description text which will include a list of files changed. Ignore files such as documentation, tests, or configuration files that don't indicate the main app/library. Focus on the core code changes to determine the app/library.
-Do NOT include "APD" in any app or library name — drop it and use only the core name (e.g. "apd_msgraph" becomes "MS Graph", "apd_quickbooksonline" becomes "QuickBooks Online").
-
-Output the email as HTML using this exact structure:
-
-<p>Here are the changes that were made to the APD Code Library.</p>
-
-<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%;">
-  <thead>
-    <tr style="background-color:#f2f2f2;">
-      <th style="text-align:left;">App / Library</th>
-      <th style="text-align:left;">Author/Reviewer</th>
-      <th style="text-align:left;">Updates</th>
-    </tr>
-  </thead>
-  <tbody>
-    <!-- One <tr> per app/library, sorted alphabetically by app name.
-         Author/Reviewer cell: unique author and reviewer names from the PR data, one per line separated by <br> — do not infer or change names. For the author place (A) before the name, for reviewers place (R) before the name, if both place (A/R) before the name. Leave blank if none.  I.E. (A) Alice Smith<br>(R) Bob Jones
-         Updates cell: bullet list of what the code now does based on the PR titles. Be concise and functional. -->
-  </tbody>
-</table>
-
-Do not include a subject line, greeting, sign-off, or any prose outside this structure. Output only valid HTML — no markdown, no code fences.
-
-Month: {month_label}
-Repository: {GITHUB_OWNER}/{GITHUB_REPO}
-
-Merged PRs this month:
-{pr_text}"""
+    prompt = _load_prompt(
+        "weekly_digest_html.md",
+        week_label=week_label,
+        github_owner=GITHUB_OWNER,
+        github_repo=GITHUB_REPO,
+        pr_text=pr_text,
+    )
 
     resp = requests.post(
         url,
@@ -182,7 +174,7 @@ Merged PRs this month:
     return content.strip()
 
 
-def generate_markdown_summary(openai_vault: dict[str, str], pr_text: str, month_label: str) -> str:
+def generate_markdown_summary(openai_vault: dict[str, str], pr_text: str, week_label: str) -> str:
     """Call Azure OpenAI to produce a markdown table summary from PR data."""
     endpoint    = openai_vault["AZURE_OPENAI_ENDPOINT"].rstrip("/")
     deployment  = openai_vault["AZURE_OPENAI_DEPLOYMENT"]
@@ -191,30 +183,13 @@ def generate_markdown_summary(openai_vault: dict[str, str], pr_text: str, month_
 
     url = f"{endpoint}/openai/deployments/{deployment}/chat/completions?api-version={api_version}"
 
-    prompt = f"""You are summarizing merged pull requests for a monthly internal team digest.
-
-Each PR entry below includes the PR title, the author, the reviewers, and the description.
-
-Group the PRs by app or library. Infer the app/library name from the PR description text which will include a list of files changed. Ignore files such as documentation, tests, or configuration files that don't indicate the main app/library. Focus on the core code changes to determine the app/library.
-Do NOT include "APD" in any app or library name — drop it and use only the core name (e.g. "apd_msgraph" becomes "MS Graph", "apd_quickbooksonline" becomes "QuickBooks Online").
-
-Output a markdown table using this exact structure:
-
-| App / Library | Author/Reviewer | Updates |
-|---|---|---|
-| Name | (A) name<br>(R) name | - capability<br>- capability |
-
-Rules:
-- One row per app/library, sorted alphabetically by app name.
-- Author/Reviewer cell: unique author and reviewer names from the PR data only, one per line separated by <br> — do not infer or change names. If Author place (A) before the name, if Reviewer place (R) before the name, if both place (A/R) before the name. Leave blank if none.  I.E. (A) Alice Smith<br>(R) Bob Jones
-- Updates cell: concise functional bullets separated by <br> describing what the code now does.
-- Output only the markdown table — no prose, no code fences, no headings.
-
-Month: {month_label}
-Repository: {GITHUB_OWNER}/{GITHUB_REPO}
-
-Merged PRs this month:
-{pr_text}"""
+    prompt = _load_prompt(
+        "weekly_digest_markdown.md",
+        week_label=week_label,
+        github_owner=GITHUB_OWNER,
+        github_repo=GITHUB_REPO,
+        pr_text=pr_text,
+    )
 
     resp = requests.post(
         url,
@@ -258,22 +233,22 @@ def github_monthly_digest() -> bool:
         return False
 
     now = datetime.now(timezone.utc)
-    last_month = now - relativedelta(months=1)
-    month_label = last_month.strftime("%B %Y")
+    week_start = now - relativedelta(days=7)
+    week_label = _format_week_range(week_start, now)
 
-    logging.info(f"Fetching PRs merged in {month_label}...")
+    logging.info(f"Fetching PRs merged in {week_label}...")
     pat = github_vault["GITHUB_PAT"]
-    prs = get_prs_last_month(pat)
+    prs = get_prs_last_week(pat)
     if not prs:
-        logging.info(f"No merged PRs found for {month_label}. Skipping email.")
+        logging.info(f"No merged PRs found for {week_label}. Skipping email.")
         return True
 
     logging.info(f"Found {len(prs)} PRs. Resolving authors and reviewers...")
     pr_text = build_pr_text(pat, prs)
     logging.info("Generating summary...")
-    summary = generate_summary(openai_vault, pr_text, month_label)
+    summary = generate_summary(openai_vault, pr_text, week_label)
 
-    subject = f"Monthly Code Update - {month_label} | {GITHUB_REPO}"
+    subject = f"Weekly Code Update - {week_label} | {GITHUB_REPO}"
     email_payload = {
         "message": {
             "subject": subject,
@@ -302,12 +277,12 @@ def github_monthly_digest() -> bool:
         page_id       = os.environ.get("CLICKUP_DIGEST_PAGE_ID", "8cfr2me-19254")
 
         logging.info("Generating markdown summary for ClickUp...")
-        clickup_summary = generate_markdown_summary(openai_vault, pr_text, month_label)
+        clickup_summary = generate_markdown_summary(openai_vault, pr_text, week_label)
 
         logging.info("Updating ClickUp page...")
         page = clickup.get_doc_page(clickup_vault, workspace_id, doc_id, page_id)
         existing_content = page.get("content", "")
-        new_section = f"## {month_label}\n\n{clickup_summary}\n\n---\n\n"
+        new_section = f"## {week_label}\n\n{clickup_summary}\n\n---\n\n"
         clickup.update_doc_page(clickup_vault, workspace_id, doc_id, page_id, new_section + existing_content)
         logging.info("ClickUp page updated successfully.")
     except Exception as e:

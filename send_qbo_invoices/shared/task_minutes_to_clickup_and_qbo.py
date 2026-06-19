@@ -176,7 +176,12 @@ def process_all_clients():
         )
         
         report_datastream = build_runtime_report(client_number, dataframe_prior_months_unattended, dataframe_prior_month_assistant, included_minutes, consumption_rate)
-        
+
+        # check if day_to_bill is a valid day of the month; if not, skip this client
+        if not (1 <= day_to_bill <= 31):
+            logging.warning(f"Invalid 'Day to Bill' value for client {client_number}: {day_to_bill!r}. Skipping.")
+            continue
+
         invoice_json = generate_invoice(
             quickbooks_online_vault,
             client_number,
