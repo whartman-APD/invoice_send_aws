@@ -132,7 +132,8 @@ def process_all_clients():
 
     unattended_data = get_unattended_data_from_sharepoint(msgraph_instance)
     
-    for item in client_orgs_table.scan()['Items']:
+    client_items = sorted(client_orgs_table.scan()['Items'], key=lambda item: int(item['client_number']))
+    for item in client_items:
         client_number = item['client_number']
         organization_id = item['organization_id']
         workspace_id = item['workspace_id']
@@ -263,11 +264,11 @@ def attach_detail_runtime_to_invoice(quickbooks_online_vault: dict[str, str], in
 
 def generate_invoice(quickbooks_online_vault: dict[str, str], client_number: str, monthly_rate: float, included_minutes: int, consumption_rate: float, total_runtime_prior_month: int, day_to_bill: str, service_type: str, client_type: str, billing_cc: str):
     # Get the day to bill from the custom field
-    current_month_and_year = datetime.now().replace(day=int(day_to_bill))
+    current_month_and_year = datetime.now().replace(day=1)
     formatted_date = current_month_and_year.strftime("%Y-%m-%d")
     due_date = formatted_date
     if client_number in NET_30_DAYS_CLIENTS:
-        due_date = (current_month_and_year + relativedelta(months=1)).strftime("%Y-%m-%d")
+        due_date = (current_month_and_year + relativedelta(months=1) - relativedelta(days=1)).strftime("%Y-%m-%d")
 
     formatted_date_long = current_month_and_year.strftime("%B %d, %Y")
     next_billing_date_long = (current_month_and_year + relativedelta(months=1) - relativedelta(days=1)).strftime("%B %d, %Y")
