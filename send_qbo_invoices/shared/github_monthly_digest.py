@@ -79,7 +79,13 @@ def get_prs_last_week(pat: str) -> list[dict[str, str]]:
 
     headers = _gh_headers(pat)
     url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/pulls"
-    params = {"state": "closed", "base": GITHUB_BRANCH, "per_page": 100}
+    params = {
+        "state": "closed",
+        "base": GITHUB_BRANCH,
+        "sort": "updated",
+        "direction": "desc",
+        "per_page": 100,
+    }
 
     prs = []
     page = 1
@@ -91,14 +97,17 @@ def get_prs_last_week(pat: str) -> list[dict[str, str]]:
         if not batch:
             break
         for pr in batch:
+            # Results are sorted by update time, not merge time. A PR merged
+            # this week may have been created long before a PR merged earlier.
+            updated_dt = datetime.fromisoformat(pr["updated_at"].replace("Z", "+00:00"))
+            if updated_dt < since:
+                return prs
             merged_at = pr.get("merged_at")
             if not merged_at:
                 continue
             merged_dt = datetime.fromisoformat(merged_at.replace("Z", "+00:00"))
             if since <= merged_dt < until:
                 prs.append(pr)
-            elif merged_dt < since:
-                return prs
         page += 1
 
     return prs
