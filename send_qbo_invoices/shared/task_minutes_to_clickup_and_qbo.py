@@ -111,6 +111,9 @@ def process_all_clients():
     logging.info("Starting task minutes to ClickUp and QBO process...")
     
     aws_region = os.environ.get("AWS_REGION", "us-west-2")
+    created_invoices = []
+    errors = []
+    msgraph_instance = None
     # Get the secrets from the vault
     try:
         aws_secretsmanager = boto3.client("secretsmanager", region_name=aws_region)
@@ -128,87 +131,132 @@ def process_all_clients():
         client_orgs_table = apd_common.get_dynamodb_table("DYNAMODB_TABLE_ROBOCORP_CLIENTS", aws_dynamodb)
     except Exception as e:
         logging.error(f"Failed to initialize instances: {e}")
+        if CREATE_INVOICE and msgraph_instance is not None:
+            try:
+                send_creation_summary(msgraph_instance, created_invoices, [{"Client #": "Run", "Error": str(e)}])
+            except Exception:
+                logging.exception("Failed to send invoice creation summary")
         return False
 
-    unattended_data = get_unattended_data_from_sharepoint(msgraph_instance)
-    
-    client_items = sorted(client_orgs_table.scan()['Items'], key=lambda item: int(item['client_number']))
-    for item in client_items:
-        client_number = item['client_number']
-        organization_id = item['organization_id']
-        workspace_id = item['workspace_id']
-        robocorp_control_room_api_key = robocorp_vault[client_number]
-        
-        logging.info(f"Processing client number: {client_number}")
-        
-        if not (LOWER_CLIENT_ID <= int(client_number) < UPPER_CLIENT_ID):
-            continue
-        
-        if client_number == "10000":
-            logging.info("Skipping Automata client number")
-            continue
+    try:
+        unattended_data = get_unattended_data_from_sharepoint(msgraph_instance)
+        client_items = sorted(client_orgs_table.scan()['Items'], key=lambda item: int(item['client_number']))
+        for item in client_items:
+            client_number = str(item['client_number'])
+            if not (LOWER_CLIENT_ID <= int(client_number) < UPPER_CLIENT_ID):
+                continue
+            if client_number == "10000":
+                logging.info("Skipping Automata client number")
+                continue
 
-        header = {
-        "Content-Type": "application/json",
-        "Authorization": f"RC-WSKEY {robocorp_control_room_api_key}"
-        }
-        
+            logging.info(f"Processing client number: {client_number}")
+            try:
+                organization_id = item['organization_id']
+                workspace_id = item['workspace_id']
+                robocorp_control_room_api_key = robocorp_vault[client_number]
+                header = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"RC-WSKEY {robocorp_control_room_api_key}"
+                }
 
-        total_runtime_prior_month_unattended, unattended_export_file_stream, organization_name = get_unattended_data_from_spreadsheet(unattended_data, client_number, organization_id)
+                total_runtime_prior_month_unattended, unattended_export_file_stream, organization_name = get_unattended_data_from_spreadsheet(unattended_data, client_number, organization_id)
+                total_runtime_prior_month_assistant, assistant_export_file_stream, dataframe_prior_month_assistant = get_assistant_runs(
+                    BILLING_CONFIG.prior_period_end,
+                    BILLING_CONFIG.prior_period_start,
+                    workspace_id,
+                    header,
+                    organization_name
+                )
+                dataframe_prior_months_unattended = get_unattended_runs(workspace_id, header)
+                total_runtime_prior_month = total_runtime_prior_month_assistant + total_runtime_prior_month_unattended
+                logging.info(f"Total runtime for client {client_number} for prior month: {total_runtime_prior_month} minutes")
 
-        total_runtime_prior_month_assistant, assistant_export_file_stream, dataframe_prior_month_assistant = get_assistant_runs(
-            BILLING_CONFIG.prior_period_end,
-            BILLING_CONFIG.prior_period_start,
-            workspace_id,
-            header,
-            organization_name
-        )
+                _, monthly_rate, included_minutes, consumption_rate, service_type, client_type, billing_cc = (
+                    send_data_to_clickup(clickup_vault, client_number, total_runtime_prior_month)
+                )
+                if monthly_rate <= 0:
+                    logging.info(f"Skipping client {client_number}: ClickUp Rate is {monthly_rate}.")
+                    continue
 
-        dataframe_prior_months_unattended = get_unattended_runs(
-            workspace_id,
-            header,  
-        )
+                report_datastream = build_runtime_report(client_number, dataframe_prior_months_unattended, dataframe_prior_month_assistant, included_minutes, consumption_rate)
+                invoice_json = generate_invoice(
+                    quickbooks_online_vault,
+                    client_number,
+                    monthly_rate,
+                    included_minutes,
+                    consumption_rate,
+                    total_runtime_prior_month,
+                    service_type,
+                    client_type,
+                    billing_cc,
+                )
 
-        total_runtime_prior_month = total_runtime_prior_month_assistant + total_runtime_prior_month_unattended
-        logging.info(f"Total runtime for client {client_number} for prior month: {total_runtime_prior_month} minutes")
-        
-        _, monthly_rate, included_minutes, consumption_rate, day_to_bill, service_type, client_type, billing_cc = (
-            send_data_to_clickup(clickup_vault, client_number, total_runtime_prior_month)
-        )
-        
-        report_datastream = build_runtime_report(client_number, dataframe_prior_months_unattended, dataframe_prior_month_assistant, included_minutes, consumption_rate)
+                if invoice_json:
+                    invoice = invoice_json["Invoice"]
+                    created_invoices.append({
+                        "Client #": client_number,
+                        "Invoice #": invoice.get("DocNumber", ""),
+                        "Invoice ID": invoice["Id"],
+                        "Amount": invoice.get("TotalAmt", ""),
+                        "Invoice Date": invoice.get("TxnDate", ""),
+                    })
+                if report_datastream and invoice_json:
+                    attach_detail_runtime_to_invoice(quickbooks_online_vault, invoice_json, report_datastream)
 
-        # check if day_to_bill is a valid day of the month; if not, skip this client
-        if not (1 <= day_to_bill <= 31):
-            logging.warning(f"Invalid 'Day to Bill' value for client {client_number}: {day_to_bill!r}. Skipping.")
-            continue
+                send_files_to_sharepoint(
+                    msgraph_instance,
+                    client_number,
+                    assistant_export_file_stream,
+                    unattended_export_file_stream,
+                    report_datastream,
+                )
+                print("=====================================")
+            except Exception as e:
+                logging.exception(f"Failed to process client {client_number}: {e}")
+                errors.append({"Client #": client_number, "Error": str(e)})
+    except Exception as e:
+        logging.exception(f"Failed to prepare invoice run: {e}")
+        errors.append({"Client #": "Run", "Error": str(e)})
 
-        invoice_json = generate_invoice(
-            quickbooks_online_vault,
-            client_number,
-            monthly_rate,
-            included_minutes,
-            consumption_rate,
-            total_runtime_prior_month,
-            day_to_bill,
-            service_type,
-            client_type,
-            billing_cc,
-        )
-
-        if report_datastream and invoice_json:
-            attach_detail_runtime_to_invoice(quickbooks_online_vault, invoice_json, report_datastream)
-
-        send_files_to_sharepoint(
-            msgraph_instance,
-            client_number,
-            assistant_export_file_stream,
-            unattended_export_file_stream,
-            report_datastream,
-        )
-        
-        print("=====================================")
+    email_sent = True
+    if CREATE_INVOICE:
+        try:
+            email_sent = send_creation_summary(msgraph_instance, created_invoices, errors)
+        except Exception:
+            logging.exception("Failed to send invoice creation summary")
+            email_sent = False
     logging.info("Completed ClickUp and QBO process...")
+    return not errors and email_sent
+
+def send_creation_summary(msgraph_instance: msgraph.MsGraph, created_invoices: list[dict], errors: list[dict]) -> bool:
+    recipient = os.environ.get("BOOKKEEPER_EMAIL", "whartman@automatapracdev.com")
+    sender = os.environ.get("SENDER_EMAIL", "robotarmy@automatapracdev.com")
+    if not recipient or not sender:
+        logging.error("BOOKKEEPER_EMAIL and SENDER_EMAIL must be set")
+        return False
+
+    template_path = os.path.join(os.path.dirname(__file__), '..', 'assets', 'created_invoices_email_template.html')
+    invoices_table = pandas.DataFrame(created_invoices).to_html(index=False, escape=True) if created_invoices else "<p>None</p>"
+    errors_table = pandas.DataFrame(errors).to_html(index=False, escape=True) if errors else "<p>None</p>"
+    template = apd_common.APD_Html_Template(template_path, {
+        "created_count": len(created_invoices),
+        "error_count": len(errors),
+        "invoices_table": invoices_table,
+        "errors_table": errors_table,
+    })
+    payload = {
+        "message": {
+            "subject": f"Invoice creation summary: {len(created_invoices)} created, {len(errors)} errors",
+            "body": {"contentType": "HTML", "content": template.template_content},
+            "toRecipients": [{"emailAddress": {"address": recipient}}],
+        },
+        "saveToSentItems": "true",
+    }
+    issues, _ = msgraph_instance.send_email(payload, alternate_email_username_for_sending=sender)
+    if issues:
+        logging.error("Failed to send invoice creation summary")
+        return False
+    logging.info("Invoice creation summary sent to %s", recipient)
     return True
 
 def send_files_to_sharepoint(msgraph_instance: msgraph.MsGraph, client_number: str, assistant_export_file_stream: str, unattended_export_file_stream: str, report_datastream: str):
@@ -262,8 +310,7 @@ def attach_detail_runtime_to_invoice(quickbooks_online_vault: dict[str, str], in
 
     print(f"Attached report to invoice {invoice_id} in QuickBooks Online.")
 
-def generate_invoice(quickbooks_online_vault: dict[str, str], client_number: str, monthly_rate: float, included_minutes: int, consumption_rate: float, total_runtime_prior_month: int, day_to_bill: str, service_type: str, client_type: str, billing_cc: str):
-    # Get the day to bill from the custom field
+def generate_invoice(quickbooks_online_vault: dict[str, str], client_number: str, monthly_rate: float, included_minutes: int, consumption_rate: float, total_runtime_prior_month: int, service_type: str, client_type: str, billing_cc: str):
     current_month_and_year = datetime.now().replace(day=1)
     formatted_date = current_month_and_year.strftime("%Y-%m-%d")
     due_date = formatted_date
@@ -292,6 +339,13 @@ def generate_invoice(quickbooks_online_vault: dict[str, str], client_number: str
     query_string = f"SELECT * FROM Customer WHERE FullyQualifiedName LIKE'{client_number}%'"
     quickbooks_online_instance = quickbooks_online.QuickBooksOnline(quickbooks_online_vault)
     response = quickbooks_online_instance.query_a_customer(query_string)
+    customers = response.get("QueryResponse", {}).get("Customer", [])
+    if not customers:
+        raise ValueError(f"No QuickBooks customer found for client {client_number}")
+    customer = customers[0]
+    billing_email = (customer.get("PrimaryEmailAddr") or {}).get("Address")
+    if not isinstance(billing_email, str) or not billing_email.strip():
+        raise ValueError(f"QuickBooks customer for client {client_number} has no billing email")
 
     # Calculate the overage minutes
     if total_runtime_prior_month > included_minutes:
@@ -332,8 +386,8 @@ def generate_invoice(quickbooks_online_vault: dict[str, str], client_number: str
         "TxnDate": formatted_date,
         "DueDate": due_date,
         "Line": line_items,
-        "CustomerRef": {"value": response["QueryResponse"]["Customer"][0]["Id"]},
-        "BillEmail": {"Address": response["QueryResponse"]["Customer"][0]["PrimaryEmailAddr"]["Address"]},
+        "CustomerRef": {"value": customer["Id"]},
+        "BillEmail": {"Address": billing_email.strip()},
         "SalesTermRef": {"value": "1"}
     }
 
@@ -376,7 +430,6 @@ def send_data_to_clickup(clickup_vault: dict[str, str], client_number: str, tota
     monthly_rate = 0
     included_minutes = 0
     consumption_rate = 0.50
-    day_to_bill = 0
     service_type = None
     client_type = None
     billing_cc = None
@@ -399,13 +452,11 @@ def send_data_to_clickup(clickup_vault: dict[str, str], client_number: str, tota
                         robocorp_lifetime_usage_column_id = custom_field["id"]
                         robocorp_lifetime_usage = int(custom_field.get("value", 0))
                     case "Rate":
-                        monthly_rate = int(custom_field.get("value", 0))
+                        monthly_rate = float(custom_field.get("value") or 0)
                     case "Included Consumption":
                         included_minutes = int(custom_field.get("value", 0))
                     case "Consumption Rate":
                         consumption_rate = float(custom_field.get("value", 0))
-                    case "Day to Bill":
-                        day_to_bill = int(custom_field.get("value", 0))
                     case "Service Type":
                         service_type_index = custom_field.get("value", "")
                         service_type = custom_field.get("type_config", "").get("options", [])[service_type_index].get("name", "")
@@ -434,7 +485,7 @@ def send_data_to_clickup(clickup_vault: dict[str, str], client_number: str, tota
     if UPDATE_CLICKUP:
         clickup.set_custom_field_value(clickup_vault, organization_task_id, robocorp_prior_usage_column_id, str(total_runtime_prior_month))
 
-    return organization_task_id, monthly_rate, included_minutes, consumption_rate, day_to_bill, service_type, client_type, billing_cc
+    return organization_task_id, monthly_rate, included_minutes, consumption_rate, service_type, client_type, billing_cc
 
 def get_unattended_data_from_spreadsheet(unattended_data:pandas.DataFrame, client_number:str, organization_id:str) -> tuple[int, io.BytesIO, str]:  
     # Filter the data for the Organization ID
