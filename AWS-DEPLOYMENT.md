@@ -129,4 +129,4 @@ Don't toggle schedules in the console — the next deploy puts them back to what
 
 ## Terraform state
 
-State is local: `infra/terraform.tfstate` (git-ignored). **Back it up** — without it Terraform can't manage the existing resources. See [infra/README.md](infra/README.md) for what each file creates.
+State is stored in S3: `s3://invoice-send-qbo-tfstate-739275469467/invoice-send-qbo/terraform.tfstate` (versioned, encrypted, private, protected from `terraform destroy`). Terraform reads and writes it automatically, and a lock file stops two applies from running at once. To recover an older state, restore a previous version of that object in the S3 console. See [infra/README.md](infra/README.md) for what each file creates.

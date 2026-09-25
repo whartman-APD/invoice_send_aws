@@ -8,6 +8,8 @@ then builds/pushes the image the task definition expects. Operating guide: [AWS-
 | File | Creates |
 |---|---|
 | `main.tf` | Providers (AWS only), default tags, account/region lookups |
+| `backend.tf` | Stores state in the S3 bucket below (with a lock file) |
+| `state.tf` | The state bucket `invoice-send-qbo-tfstate-739275469467`: versioned, encrypted, private, `prevent_destroy` |
 | `variables.tf` | Every setting, with safe defaults (all write flags `false`, schedules disabled) |
 | `terraform.tfvars` | **Git-ignored.** Production values that override the defaults |
 | `ecr.tf` | ECR repo `invoice-send-qbo` (keeps the last 10 images); computes the image tag from a hash of the app source |
@@ -31,5 +33,5 @@ then builds/pushes the image the task definition expects. Operating guide: [AWS-
 
 - **The image isn't built by Terraform.** The Terraform Docker provider hung for 18+ minutes on Windows, so `deploy.ps1` builds with the normal `docker build` (cached, shows progress). The task definition references `repo:<source hash>`; ECS only pulls it when a task starts.
 - **sync-processes uses the n8n VPC's private subnets** (`sync_vpc_id`, `sync_subnet_ids`) because their NAT gateway IP (44.253.27.41) is on the Azure SQL firewall. They're referenced by ID only; this Terraform never changes the n8n VPC.
-- **State is local** (`terraform.tfstate`, git-ignored). Back it up.
+- **State is in S3** (see `backend.tf`); every version is kept. Any leftover local `terraform.tfstate*` files are pre-migration copies and are git-ignored.
 - `terraform validate` / `plan` are read-only; `apply` changes AWS but never starts a job.

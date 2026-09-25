@@ -10,7 +10,7 @@ One Docker image with four jobs, selected by a command-line flag:
 |---|---|---|
 | `--create-invoices` | Creates monthly QBO invoices from Robocorp usage (ClickUp rates, runtime reports to SharePoint) | AWS ECS Fargate, EventBridge Scheduler (4th of the month, 6 AM PT) |
 | `--github-digest` | Weekly summary of merged PRs, emailed and prepended to a ClickUp doc | AWS ECS Fargate, EventBridge Scheduler (Mondays 1 AM PT) |
-| `--sync-processes` | Syncs Robocorp processes/assistants to Azure SQL | AWS ECS Fargate, daily 4 AM PT, in the n8n VPC's private subnets (NAT IP 44.253.27.41 is on the Azure SQL firewall). Local Windows task until cutover. |
+| `--sync-processes` | Syncs Robocorp processes/assistants to Azure SQL | AWS ECS Fargate, daily 4 AM PT, in the n8n VPC's private subnets (NAT IP 44.253.27.41 is on the Azure SQL firewall). |
 | `--send-invoices` | Sends today's QBO invoices, emails summary | Local Docker + Windows scheduled task; **deprecated**, retiring end of Sept 2026 |
 
 ## Common Commands
@@ -81,4 +81,4 @@ send_qbo_invoices/
 - Never add retries to `--create-invoices` (scheduler or code): a rerun creates duplicate invoices.
 - `datetime.now()` in the container is UTC.
 - Code changes require an image rebuild: `docker-compose build` locally, `.\deploy.ps1` for AWS (the image tag is a hash of the source files, so any change produces a new task definition revision). Terraform does not build images; the kreuzwerker Docker provider hung on Windows.
-- Terraform state is local (`infra/terraform.tfstate`, git-ignored) — back it up.
+- Terraform state is in S3 (`infra/backend.tf`, bucket defined in `infra/state.tf` with `prevent_destroy`). Don't move or delete that bucket.

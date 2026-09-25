@@ -5,8 +5,8 @@ The Docker image used for every job, locally and on AWS. For what each job does 
 
 ## Running locally
 
-Local Docker is used for **send-invoices** through 2026-09-30 and for **sync-processes** until its AWS cutover
-("Azure Update Process Names" scheduled task). After that, local runs are for development only. Commands run from this folder:
+Local Docker is used only for **send-invoices**, through 2026-09-30. After that, local runs are for development only;
+every scheduled job runs on AWS. Commands run from this folder:
 
 ```powershell
 copy .env.template .env        # first time only, then fill it in
