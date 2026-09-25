@@ -23,6 +23,7 @@ class InvoiceCreationTests(unittest.TestCase):
 
         quickbooks.create_invoice.assert_not_called()
 
+    @patch.object(invoices.apd_common, "update_secret")
     @patch.object(invoices, "send_creation_summary")
     @patch.object(invoices, "send_files_to_sharepoint")
     @patch.object(invoices, "generate_invoice")
@@ -40,7 +41,7 @@ class InvoiceCreationTests(unittest.TestCase):
     def test_rate_gate_client_error_and_summary(self, boto_client, boto_resource, get_secrets, get_table,
                                    msgraph_class, get_sharepoint, get_spreadsheet,
                                    get_assistant, get_unattended, get_clickup, build_report,
-                                   generate, send_files, send_summary):
+                                   generate, send_files, send_summary, update_secret):
         get_secrets.side_effect = [{}, {}, {"10001": "key", "10002": "key", "10003": "key"},
                                    {"tenant_id": "", "client_id": "", "client_secret_value": "", "hostname": ""}]
         get_table.return_value.scan.return_value = {"Items": [
@@ -69,6 +70,9 @@ class InvoiceCreationTests(unittest.TestCase):
         created, errors = send_summary.call_args.args[1:]
         self.assertEqual(created[0]["Invoice ID"], "99")
         self.assertEqual(errors[0]["Client #"], "10002")
+        self.assertEqual(len(errors), 1)
+        update_secret.assert_called_once()
+        self.assertEqual(update_secret.call_args.args[0], "QBO_SECRET_NAME")
 
     def test_summary_contains_escaped_error_and_invoice(self):
         msgraph = Mock()

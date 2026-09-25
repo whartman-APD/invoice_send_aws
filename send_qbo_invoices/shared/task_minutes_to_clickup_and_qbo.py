@@ -32,13 +32,13 @@ UPPER_CLIENT_ID = int(os.environ.get("UPPER_CLIENT_ID", "20030"))
 NET_30_DAYS_CLIENTS = os.environ.get("NET_30_DAYS_CLIENTS", "").split(",")
 
 def get_billing_reference_date() -> datetime:
-    """Get billing reference date from environment variable or default to first day of prior month."""
+    """Get billing reference date (first day of the billing month) from environment variable, or default to the prior calendar month."""
     reference_date_str = os.environ.get("BILLING_REFERENCE_DATE", "")
     if reference_date_str:
         # Parse format: YYYY-MM-DD
         return datetime.strptime(reference_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     else:
-        # Default to first day of prior month
+        # Default to first day of prior calendar month
         now = datetime.now(timezone.utc)
         # Subtract one month by going to first of current month, then subtracting one day
         first_of_current_month = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
@@ -56,25 +56,29 @@ BASE_PATH = f"10000 - Automata Practice Development/{SUB_FOLDER_NAME}"
 
 @dataclass
 class BillingPeriodConfig:
-    """Configuration for billing periods."""
+    """Configuration for billing periods.
+
+    billing period: the month being invoiced (reference_date through month end)
+    comparison period: the month before it, shown next to the billing month in the runtime report
+    """
     reference_date: datetime
     
     @property
-    def current_period_start(self) -> datetime:
+    def billing_period_start(self) -> datetime:
         return self.reference_date
     
     @property
-    def current_period_end(self) -> datetime:
+    def billing_period_end(self) -> datetime:
         return (self.reference_date + relativedelta(months=1, days=-1)).replace(
             hour=23, minute=59, second=59
         )
     
     @property
-    def prior_period_start(self) -> datetime:
+    def comparison_period_start(self) -> datetime:
         return self.reference_date - relativedelta(months=1)
     
     @property
-    def prior_period_end(self) -> datetime:
+    def comparison_period_end(self) -> datetime:
         return (self.reference_date - relativedelta(days=1)).replace(
             hour=23, minute=59, second=59
         )
@@ -82,19 +86,19 @@ class BillingPeriodConfig:
     @property
     def sharepoint_file_date(self) -> str:
         """Format: YYYY-M with zero-indexed month for Robocorp (e.g., '2025-0' for January 2025)"""
-        year = self.current_period_start.year
-        month = self.current_period_start.month - 1  # Zero-indexed for Robocorp
+        year = self.billing_period_start.year
+        month = self.billing_period_start.month - 1  # Zero-indexed for Robocorp
         return f"{year}-{month}"
     
     @property
     def sharepoint_report_date(self) -> str:
         """Format: Month YYYY (e.g., 'September 2025')"""
-        return self.current_period_start.strftime("%Y-%-m" if os.name != "nt" else "%Y-%#m")
+        return self.billing_period_start.strftime("%Y-%-m" if os.name != "nt" else "%Y-%#m")
     
     @property
     def sharepoint_minutes_file_date(self) -> str:
         """Format: YYYY-MM (e.g., '2025-01' for January 2025)"""
-        return self.current_period_start.strftime("%Y-%m")
+        return self.billing_period_start.strftime("%Y-%m")
 
 # Initialize billing configuration
 BILLING_CONFIG = BillingPeriodConfig(
@@ -159,33 +163,34 @@ def process_all_clients():
                     "Authorization": f"RC-WSKEY {robocorp_control_room_api_key}"
                 }
 
-                total_runtime_prior_month_unattended, unattended_export_file_stream, organization_name = get_unattended_data_from_spreadsheet(unattended_data, client_number, organization_id)
-                total_runtime_prior_month_assistant, assistant_export_file_stream, dataframe_prior_month_assistant = get_assistant_runs(
-                    BILLING_CONFIG.prior_period_end,
-                    BILLING_CONFIG.prior_period_start,
+                total_runtime_billing_month_unattended, unattended_export_file_stream, organization_name = get_unattended_data_from_spreadsheet(unattended_data, client_number, organization_id)
+                total_runtime_billing_month_assistant, assistant_export_file_stream, dataframe_report_assistant = get_assistant_runs(
+                    BILLING_CONFIG.billing_period_start,
+                    BILLING_CONFIG.billing_period_end,
+                    BILLING_CONFIG.comparison_period_start,
                     workspace_id,
                     header,
                     organization_name
                 )
-                dataframe_prior_months_unattended = get_unattended_runs(workspace_id, header)
-                total_runtime_prior_month = total_runtime_prior_month_assistant + total_runtime_prior_month_unattended
-                logging.info(f"Total runtime for client {client_number} for prior month: {total_runtime_prior_month} minutes")
+                dataframe_report_unattended = get_unattended_runs(workspace_id, header)
+                total_runtime_billing_month = total_runtime_billing_month_assistant + total_runtime_billing_month_unattended
+                logging.info(f"Total runtime for client {client_number} for billing month: {total_runtime_billing_month} minutes")
 
                 _, monthly_rate, included_minutes, consumption_rate, service_type, client_type, billing_cc = (
-                    send_data_to_clickup(clickup_vault, client_number, total_runtime_prior_month)
+                    send_data_to_clickup(clickup_vault, client_number, total_runtime_billing_month)
                 )
                 if monthly_rate <= 0:
                     logging.info(f"Skipping client {client_number}: ClickUp Rate is {monthly_rate}.")
                     continue
 
-                report_datastream = build_runtime_report(client_number, dataframe_prior_months_unattended, dataframe_prior_month_assistant, included_minutes, consumption_rate)
+                report_datastream = build_runtime_report(client_number, dataframe_report_unattended, dataframe_report_assistant, included_minutes, consumption_rate)
                 invoice_json = generate_invoice(
                     quickbooks_online_vault,
                     client_number,
                     monthly_rate,
                     included_minutes,
                     consumption_rate,
-                    total_runtime_prior_month,
+                    total_runtime_billing_month,
                     service_type,
                     client_type,
                     billing_cc,
@@ -317,17 +322,17 @@ def attach_detail_runtime_to_invoice(quickbooks_online_vault: dict[str, str], in
 
     print(f"Attached report to invoice {invoice_id} in QuickBooks Online.")
 
-def generate_invoice(quickbooks_online_vault: dict[str, str], client_number: str, monthly_rate: float, included_minutes: int, consumption_rate: float, total_runtime_prior_month: int, service_type: str, client_type: str, billing_cc: str):
-    current_month_and_year = datetime.now().replace(day=1)
-    formatted_date = current_month_and_year.strftime("%Y-%m-%d")
+def generate_invoice(quickbooks_online_vault: dict[str, str], client_number: str, monthly_rate: float, included_minutes: int, consumption_rate: float, total_runtime_billing_month: int, service_type: str, client_type: str, billing_cc: str):
+    invoice_month = datetime.now().replace(day=1)
+    formatted_date = invoice_month.strftime("%Y-%m-%d")
     due_date = formatted_date
     if client_number in NET_30_DAYS_CLIENTS:
-        due_date = (current_month_and_year + relativedelta(months=1) - relativedelta(days=1)).strftime("%Y-%m-%d")
+        due_date = (invoice_month + relativedelta(months=1) - relativedelta(days=1)).strftime("%Y-%m-%d")
 
-    formatted_date_long = current_month_and_year.strftime("%B %d, %Y")
-    next_billing_date_long = (current_month_and_year + relativedelta(months=1) - relativedelta(days=1)).strftime("%B %d, %Y")
-    prior_month_and_year = (datetime.now() - relativedelta(months=1)).strftime("%B %Y")
-    overage_description = f"Runtime Overage for {prior_month_and_year}"
+    formatted_date_long = invoice_month.strftime("%B %d, %Y")
+    next_billing_date_long = (invoice_month + relativedelta(months=1) - relativedelta(days=1)).strftime("%B %d, %Y")
+    billing_month_and_year = BILLING_CONFIG.billing_period_start.strftime("%B %Y")
+    overage_description = f"Runtime Overage for {billing_month_and_year}"
 
     description = ""
     if service_type == "Managed Service" and client_type == "Client":
@@ -355,8 +360,8 @@ def generate_invoice(quickbooks_online_vault: dict[str, str], client_number: str
         raise ValueError(f"QuickBooks customer for client {client_number} has no billing email")
 
     # Calculate the overage minutes
-    if total_runtime_prior_month > included_minutes:
-        overage_minutes = total_runtime_prior_month - included_minutes
+    if total_runtime_billing_month > included_minutes:
+        overage_minutes = total_runtime_billing_month - included_minutes
     else:
         overage_minutes = 0
     
@@ -409,8 +414,8 @@ def generate_invoice(quickbooks_online_vault: dict[str, str], client_number: str
 
     return invoice_json
 
-def send_data_to_clickup(clickup_vault: dict[str, str], client_number: str, total_runtime_prior_month: int):
-    print(f"Total runtime for {client_number} for prior month: {total_runtime_prior_month} minutes")
+def send_data_to_clickup(clickup_vault: dict[str, str], client_number: str, total_runtime_billing_month: int):
+    print(f"Total runtime for {client_number} for billing month: {total_runtime_billing_month} minutes")
 
     list_id = clickup_vault["CRM_Business_List"]
     special_custom_field_id = clickup_vault["CRM_Business_List_Ac_Num_Query"] # This is the custom field id for "Account #" so we can filter using query params
@@ -483,21 +488,21 @@ def send_data_to_clickup(clickup_vault: dict[str, str], client_number: str, tota
         # continue
 
     # add total to the lifetime usage
-    robocorp_lifetime_usage += total_runtime_prior_month
+    robocorp_lifetime_usage += total_runtime_billing_month
     if UPDATE_CLICKUP:
         clickup.set_custom_field_value(clickup_vault, organization_task_id, robocorp_lifetime_usage_column_id, str(robocorp_lifetime_usage))
     print(f"Total lifetime usage for {client_number}: {robocorp_lifetime_usage} minutes")
 
-    # set prior month usage
+    # Set the "Robocorp Prior Month" field to the billing month usage
     if UPDATE_CLICKUP:
-        clickup.set_custom_field_value(clickup_vault, organization_task_id, robocorp_prior_usage_column_id, str(total_runtime_prior_month))
+        clickup.set_custom_field_value(clickup_vault, organization_task_id, robocorp_prior_usage_column_id, str(total_runtime_billing_month))
 
     return organization_task_id, monthly_rate, included_minutes, consumption_rate, service_type, client_type, billing_cc
 
 def get_unattended_data_from_spreadsheet(unattended_data:pandas.DataFrame, client_number:str, organization_id:str) -> tuple[int, io.BytesIO, str]:  
     # Filter the data for the Organization ID
     unattended_data_for_organization:pandas.DataFrame = unattended_data[unattended_data["Organization ID"] == organization_id]
-    total_runtime_prior_month_unattended = unattended_data_for_organization['Process total run minutes used'].sum()
+    total_runtime_billing_month_unattended = unattended_data_for_organization['Process total run minutes used'].sum()
     
     #Remove all columns except those needed for export
     unattended_data_for_organization = unattended_data_for_organization[['Organization ID', 'Organization name', 'Process name', 'Process ID', 'Process total run minutes used', 'Process On-demand run minutes used']]
@@ -517,7 +522,7 @@ def get_unattended_data_from_spreadsheet(unattended_data:pandas.DataFrame, clien
             unattended_data_for_organization.to_excel(writer, index=False, sheet_name="Unattended Processes")
 
     export_file_stream.seek(0)
-    return total_runtime_prior_month_unattended, export_file_stream, organization_name
+    return total_runtime_billing_month_unattended, export_file_stream, organization_name
 
 def get_unattended_runs(workspace_id: str, header: dict[str, str]) -> pandas.DataFrame:
     print("Getting Unattended Runs")
@@ -548,15 +553,15 @@ def get_unattended_runs(workspace_id: str, header: dict[str, str]) -> pandas.Dat
     dataframe_unattended_processes['runtime'] = 0
     
     # Filter the DataFrame for rows in the prior two month
-    dataframe_prior_months_unattended = dataframe_unattended_processes[
-        (dataframe_unattended_processes['started_at'] >= BILLING_CONFIG.prior_period_start) &
-        (dataframe_unattended_processes['started_at'] <= BILLING_CONFIG.current_period_end)
+    dataframe_report_unattended = dataframe_unattended_processes[
+        (dataframe_unattended_processes['started_at'] >= BILLING_CONFIG.comparison_period_start) &
+        (dataframe_unattended_processes['started_at'] <= BILLING_CONFIG.billing_period_end)
     ]
     
     # Get the runtime for each process run in the filtered DataFrame using the step duration
     count = 1
-    for index, row in dataframe_prior_months_unattended.iterrows():
-        logging.info(f"Processing unattended run {count} of {len(dataframe_prior_months_unattended)}")
+    for index, row in dataframe_report_unattended.iterrows():
+        logging.info(f"Processing unattended run {count} of {len(dataframe_report_unattended)}")
         count += 1
         process_id = row['id']
         query_params = {
@@ -581,20 +586,20 @@ def get_unattended_runs(workspace_id: str, header: dict[str, str]) -> pandas.Dat
         for step in unattended_run_list:
             if step['duration'] is not None:
                 rounded_minutes = math.ceil(step['duration'] / 60) + rounded_minutes
-        dataframe_prior_months_unattended.at[index, 'runtime'] = rounded_minutes
+        dataframe_report_unattended.at[index, 'runtime'] = rounded_minutes
 
-    return dataframe_prior_months_unattended
+    return dataframe_report_unattended
 
-def build_runtime_report(client_number: str, dataframe_prior_months_unattended: pandas.DataFrame, dataframe_prior_month_assistant: pandas.DataFrame, included_minutes: int, consumption_rate: float):
+def build_runtime_report(client_number: str, dataframe_report_unattended: pandas.DataFrame, dataframe_report_assistant: pandas.DataFrame, included_minutes: int, consumption_rate: float):
     
     # check if empty. If not empty, Remove Columns, Rename Columns and merge together. If not, then create empty dataframe with correct columns
-    if not dataframe_prior_month_assistant.empty:
-        df_assistant_trimmed = dataframe_prior_month_assistant[["Process Name", "started_at", "runtime"]].copy()
+    if not dataframe_report_assistant.empty:
+        df_assistant_trimmed = dataframe_report_assistant[["Process Name", "started_at", "runtime"]].copy()
         df_assistant_trimmed.rename(columns={"Process Name": "Process", "started_at": "Date", "runtime": "Runtime"}, inplace=True)
     else:
         df_assistant_trimmed = pandas.DataFrame(columns=["Process", "Date", "Runtime"])
-    if not dataframe_prior_months_unattended.empty:
-        df_unattended_trimmed = dataframe_prior_months_unattended[["process", "started_at", "runtime"]].copy()
+    if not dataframe_report_unattended.empty:
+        df_unattended_trimmed = dataframe_report_unattended[["process", "started_at", "runtime"]].copy()
         df_unattended_trimmed.rename(columns={"process": "Process", "started_at": "Date", "runtime": "Runtime"}, inplace=True)
     else:
         df_unattended_trimmed = pandas.DataFrame(columns=["Process", "Date", "Runtime"])
@@ -605,9 +610,13 @@ def build_runtime_report(client_number: str, dataframe_prior_months_unattended: 
         return None
     
     # Clean up Names and Convert to DateTime
-    def extract_process_name(x: dict[str, str] | str) -> str|None:
-        return x.get("name", "") if isinstance(x, dict) else None
-    df_trimmed["Process"] = df_trimmed["Process"].apply(extract_process_name)
+    # Unattended runs carry the process as a dict ({"id", "name"}); assistant runs already carry the name as text
+    def extract_process_name(x: object) -> str|None:
+        if isinstance(x, dict):
+            return x.get("name") or None
+        return x if isinstance(x, str) and x else None
+    # Keep unnamed runs visible: pivot_table silently drops rows whose index value is missing
+    df_trimmed["Process"] = df_trimmed["Process"].apply(extract_process_name).fillna("(Unknown process)")
     
     df_trimmed["Date"] = pandas.to_datetime(df_trimmed["Date"], utc=True).dt.tz_localize(None).dt.date
     pivot_table_df = df_trimmed.copy()
@@ -626,12 +635,12 @@ def build_runtime_report(client_number: str, dataframe_prior_months_unattended: 
     ).reset_index()
     pivot_table.loc["Total"] = pivot_table.sum(numeric_only=True)
     pivot_table.loc["Total", "Process"] = "Total"
-    # Get the total from the rightmost column (last month)
+    # Get the total from the rightmost column (the billing month)
     rightmost_col = pivot_table.columns[-1]
-    total_previous_month_runtime_data = pivot_table.loc[pivot_table["Process"] == "Total", rightmost_col]
-    total_prior_month = total_previous_month_runtime_data.values[0] if not total_previous_month_runtime_data.empty else 0
+    billing_month_runtime_data = pivot_table.loc[pivot_table["Process"] == "Total", rightmost_col]
+    total_billing_month = billing_month_runtime_data.values[0] if not billing_month_runtime_data.empty else 0
     
-    print(f"Total from the prior month ({rightmost_col}): {total_prior_month}")
+    print(f"Total from the billing month ({rightmost_col}): {total_billing_month}")
 
     # Prepare Bar Chart Data for the last two months
     bar_chart_df["Month"] = pandas.to_datetime(bar_chart_df["Date"]).dt.to_period("M").astype(str)
@@ -645,33 +654,33 @@ def build_runtime_report(client_number: str, dataframe_prior_months_unattended: 
         daily_summary.to_excel(writer, index=False, sheet_name="Two Month Run Compare")
         run_data_df.to_excel(writer, index=False, sheet_name="Run Data")
     
-    if total_prior_month > 0:
-        add_overage_calculation_sheet(included_minutes, consumption_rate, total_prior_month, report_data_stream)
+    if total_billing_month > 0:
+        add_overage_calculation_sheet(included_minutes, consumption_rate, total_billing_month, report_data_stream)
     report_data_stream.seek(0)
     
     final_data_stream = build_monthly_graph(daily_summary, report_data_stream)
 
     return final_data_stream
 
-def add_overage_calculation_sheet(included_minutes: int, consumption_rate: float, total_prior_month: int, report_data_stream: io.BytesIO):
+def add_overage_calculation_sheet(included_minutes: int, consumption_rate: float, total_billing_month: int, report_data_stream: io.BytesIO):
     report_data_stream.seek(0)
     wb = load_workbook(report_data_stream)
     wb.create_sheet("Overage Calculation")
     ws = wb["Overage Calculation"]
     last_row = 1
     ws.cell(row=last_row, column=1, value="Prior Month Total Runtime")
-    ws.cell(row=last_row, column=2, value=total_prior_month)
+    ws.cell(row=last_row, column=2, value=total_billing_month)
     ws.cell(row=last_row + 1, column=1, value="Included Minutes")
     ws.cell(row=last_row + 1, column=2, value=included_minutes)
     ws.cell(row=last_row + 2, column=1, value="Overage Minutes")
-    overage_minutes = total_prior_month - included_minutes if int(total_prior_month) > int(included_minutes) else 0
+    overage_minutes = total_billing_month - included_minutes if int(total_billing_month) > int(included_minutes) else 0
     ws.cell(row=last_row + 2, column=2, value=overage_minutes)
     ws.cell(row=last_row + 3, column=1, value="Consumption Rate")
     ws.cell(row=last_row + 3, column=2, value=consumption_rate)
     ws.cell(row=last_row + 4, column=1, value="Total Overage Cost")
     total_cost = overage_minutes * consumption_rate
     ws.cell(row=last_row + 4, column=2, value=total_cost)
-    print(f"Prior Month Total Runtime: {total_prior_month}")
+    print(f"Billing Month Total Runtime: {total_billing_month}")
     print(f"Included Minutes: {included_minutes}")
     print(f"Overage Minutes: {overage_minutes}")
     print(f"Consumption Rate: {consumption_rate}")
@@ -752,7 +761,11 @@ def build_monthly_graph(daily_summary: pandas.DataFrame, report_data_stream: io.
 
     return final_stream
 
-def get_assistant_runs(last_day_of_prior_month: str, first_day_of_prior_month: str, workspace_id: str, header: dict[str, str], organization_name: str) -> tuple[int, io.BytesIO, pandas.DataFrame]:
+def get_assistant_runs(billing_period_start: datetime, billing_period_end: datetime, comparison_period_start: datetime, workspace_id: str, header: dict[str, str], organization_name: str) -> tuple[int, io.BytesIO, pandas.DataFrame]:
+    """
+    Returns (billed minutes for the billing period, Excel export of the billing period's runs,
+    runs from comparison_period_start through billing_period_end for the runtime report).
+    """
     print("Getting Assistant Runs")
     excel_stream = io.BytesIO()
     query_params = {
@@ -785,39 +798,48 @@ def get_assistant_runs(last_day_of_prior_month: str, first_day_of_prior_month: s
     dataframe_assistant_runs['Organization ID'] = workspace_id
     dataframe_assistant_runs['started_at'] = pandas.to_datetime(dataframe_assistant_runs['started_at'])
 
-    # Filter the DataFrame for rows in the prior month and with state "completed"
-    dataframe_prior_month_assistant = dataframe_assistant_runs[
-        (dataframe_assistant_runs['started_at'] >= first_day_of_prior_month) &
-        (dataframe_assistant_runs['started_at'] <= last_day_of_prior_month)
+    # Filter the DataFrame for rows in the report window (comparison month through the billing month)
+    dataframe_report_assistant = dataframe_assistant_runs[
+        (dataframe_assistant_runs['started_at'] >= comparison_period_start) &
+        (dataframe_assistant_runs['started_at'] <= billing_period_end)
     ].copy()
 
-    if dataframe_prior_month_assistant.empty:
-        print("No Assistant runs found for the prior month.")
+    if dataframe_report_assistant.empty:
+        print("No Assistant runs found for the report period.")
         return 0, excel_stream, pandas.DataFrame()
 
     # Round the durations up to the nearest minute and assign it to the Process total run minutes used column
     def round_up_to_minute(x: int) -> int:
         return math.ceil(x / 60)
-    rounded_minutes = dataframe_prior_month_assistant['duration'].apply(round_up_to_minute)
-    dataframe_prior_month_assistant['Process total run minutes used'] = rounded_minutes
-    dataframe_prior_month_assistant['runtime'] = rounded_minutes
+    rounded_minutes = dataframe_report_assistant['duration'].apply(round_up_to_minute)
+    dataframe_report_assistant['Process total run minutes used'] = rounded_minutes
+    dataframe_report_assistant['runtime'] = rounded_minutes
+
+    # Only the billing period is billed and exported
+    dataframe_billing_month_assistant = dataframe_report_assistant[
+        dataframe_report_assistant['started_at'] >= billing_period_start
+    ].copy()
+
+    if dataframe_billing_month_assistant.empty:
+        print("No Assistant runs found for the billing period.")
+        return 0, excel_stream, dataframe_report_assistant
 
     # Sum the Process total run minutes used for these filtered rows
-    total_runtime_prior_month_assistant = dataframe_prior_month_assistant['Process total run minutes used'].sum()
+    total_runtime_billing_month_assistant = dataframe_billing_month_assistant['Process total run minutes used'].sum()
 
     # Convert timezone-aware datetime columns to naive datetime
-    for col in dataframe_prior_month_assistant.columns:
-        if pandas.api.types.is_datetime64_any_dtype(dataframe_prior_month_assistant[col]):
-            series = dataframe_prior_month_assistant[col]
+    for col in dataframe_billing_month_assistant.columns:
+        if pandas.api.types.is_datetime64_any_dtype(dataframe_billing_month_assistant[col]):
+            series = dataframe_billing_month_assistant[col]
             if hasattr(series.dt, 'tz') and series.dt.tz is not None:  # type: ignore
-                dataframe_prior_month_assistant[col] = series.dt.tz_localize(None)  # type: ignore
+                dataframe_billing_month_assistant[col] = series.dt.tz_localize(None)  # type: ignore
 
 
     with pandas.ExcelWriter(excel_stream, engine='xlsxwriter') as writer:
-        dataframe_prior_month_assistant.to_excel(writer, index=False, sheet_name='Assistant Runs')
+        dataframe_billing_month_assistant.to_excel(writer, index=False, sheet_name='Assistant Runs')
 
-    excel_stream.seek(0)    
-    return total_runtime_prior_month_assistant, excel_stream, dataframe_prior_month_assistant
+    excel_stream.seek(0)
+    return total_runtime_billing_month_assistant, excel_stream, dataframe_report_assistant
 
 def get_site_id_and_drive_id(msgraph_instance: msgraph.MsGraph, site_name: str, document_library_name: str):
     #Sharepoint navigation

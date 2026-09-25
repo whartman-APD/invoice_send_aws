@@ -188,9 +188,9 @@ variable "github_digest_schedule_enabled" {
 }
 
 variable "create_invoices_schedule" {
-  description = "When to run invoice creation (default: 2nd of the month, 6:00 AM)"
+  description = "When to run invoice creation (default: 4th of the month, 6:00 AM; the usage CSV is downloaded on the 1st)"
   type        = string
-  default     = "cron(0 6 2 * ? *)"
+  default     = "cron(0 6 4 * ? *)"
 }
 
 variable "create_invoices_schedule_enabled" {

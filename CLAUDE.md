@@ -62,7 +62,8 @@ send_qbo_invoices/
 - All credentials live in AWS Secrets Manager; env vars hold only the secret **names** (`QBO_SECRET_NAME`, `MSGRAPH_SECRET_NAME`, `CLICKUP_SECRET_NAME`, `ROBOCORP_API_SECRET_NAME`, `GITHUB_PAT_SECRET_NAME`, `AZURE_OPENAI_SECRET_NAME`, `AZURE_SQL_SECRET_NAME`).
 - On AWS, env vars are set in `infra/ecs.tf` from `infra/variables.tf` / `terraform.tfvars`. Locally they come from `send_qbo_invoices/.env` via `docker-compose.yml`. Keep the two in sync when adding a variable.
 - `CREATE_INVOICE`, `UPDATE_CLICKUP`, `UPLOAD_TO_SHAREPOINT` gate every side effect of `--create-invoices`; Terraform defaults them to `false`.
-- `BILLING_REFERENCE_DATE` (YYYY-MM-DD) overrides the billing month; defaults to the prior month.
+- `BILLING_REFERENCE_DATE` (YYYY-MM-DD) overrides the billing month; defaults to the prior calendar month.
+- Naming in `task_minutes_to_clickup_and_qbo.py`: **billing month** = the month being invoiced (`BILLING_CONFIG.billing_period_*`); **comparison month** = the month before it, shown only in the runtime report (`comparison_period_*`); **report** data spans both. Don't use "prior month"/"current period" in identifiers — they're ambiguous relative to the run date.
 
 ## Important Notes
 
