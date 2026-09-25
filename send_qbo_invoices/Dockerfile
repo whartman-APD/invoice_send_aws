@@ -1,4 +1,4 @@
-# Use Python 3.11 slim image (matches Lambda runtime)
+# Python 3.11 slim base image
 FROM python:3.11-slim
 
 # Set working directory

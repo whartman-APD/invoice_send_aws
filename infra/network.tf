@@ -72,3 +72,34 @@ resource "aws_security_group" "task" {
     Name = "${var.repository_name}-task"
   }
 }
+
+# ------------------------------------------------------------------------------
+# sync-processes runs in the n8n VPC's private subnets so its traffic leaves through the
+# NAT gateway IP that the Azure SQL firewall allows. Only this security group is ours.
+# ------------------------------------------------------------------------------
+
+resource "aws_security_group" "sync" {
+  name        = "${var.repository_name}-sync"
+  description = "Invoice automation sync-processes task - outbound only"
+  vpc_id      = var.sync_vpc_id
+
+  egress {
+    description = "HTTPS to Robocorp and AWS services"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "Azure SQL"
+    from_port   = 1433
+    to_port     = 1433
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.repository_name}-sync"
+  }
+}

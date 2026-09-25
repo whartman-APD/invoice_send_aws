@@ -70,6 +70,7 @@ variable "secret_names" {
     ROBOCORP_API_SECRET_NAME = "RoboCorp/10000/ClientAPIKeys"
     GITHUB_PAT_SECRET_NAME   = "GitHub/10000/PersonalAccessToken"
     AZURE_OPENAI_SECRET_NAME = "AzureOpenAI/10000"
+    AZURE_SQL_SECRET_NAME    = "AzureSQLServer/10000"
   }
 }
 
@@ -197,6 +198,40 @@ variable "create_invoices_schedule_enabled" {
   description = "Turn the invoice creation schedule on (leave off to run it on demand)"
   type        = bool
   default     = false
+}
+
+variable "sync_processes_schedule" {
+  description = "When to run the Robocorp -> Azure SQL sync (default: daily 4:00 AM)"
+  type        = string
+  default     = "cron(0 4 * * ? *)"
+}
+
+variable "sync_processes_schedule_enabled" {
+  description = "Turn the sync-processes schedule on"
+  type        = bool
+  default     = false
+}
+
+# ------------------------------------------------------------------------------
+# sync-processes network: the n8n VPC's private subnets, whose NAT gateway
+# (nat-0b368ad7c9ae99107, 44.253.27.41) is already allowed by the Azure SQL firewall.
+# Referenced only; this Terraform never modifies that VPC or its subnets.
+# ------------------------------------------------------------------------------
+
+variable "sync_vpc_id" {
+  description = "VPC containing the NAT'd private subnets used by sync-processes"
+  type        = string
+  default     = "vpc-087a5bdbc7e01ed60"
+}
+
+variable "sync_subnet_ids" {
+  description = "Private subnets that route through the NAT gateway allowed by Azure SQL"
+  type        = list(string)
+  default = [
+    "subnet-076b9886e58db1192", # n8n-private-subnet-1 (us-west-2a)
+    "subnet-038b63877e5566854", # n8n-private-subnet-2 (us-west-2b)
+    "subnet-0d7b306b1a9ae1f04", # n8n-private-subnet-3 (us-west-2c)
+  ]
 }
 
 # ------------------------------------------------------------------------------

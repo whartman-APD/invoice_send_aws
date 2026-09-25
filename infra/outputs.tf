@@ -30,12 +30,14 @@ output "log_group_name" {
 output "run_task_config" {
   description = "Settings for starting a task by hand"
   value = {
-    region          = var.aws_region
-    cluster         = aws_ecs_cluster.main.name
-    task_definition = aws_ecs_task_definition.app.family
-    container_name  = local.container_name
-    subnets         = aws_subnet.public[*].id
-    security_group  = aws_security_group.task.id
-    log_group       = aws_cloudwatch_log_group.app.name
+    region              = var.aws_region
+    cluster             = aws_ecs_cluster.main.name
+    task_definition     = aws_ecs_task_definition.app.family
+    container_name      = local.container_name
+    subnets             = aws_subnet.public[*].id
+    security_group      = aws_security_group.task.id
+    sync_subnets        = var.sync_subnet_ids
+    sync_security_group = aws_security_group.sync.id
+    log_group           = aws_cloudwatch_log_group.app.name
   }
 }

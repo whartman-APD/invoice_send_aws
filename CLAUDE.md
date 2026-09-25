@@ -8,9 +8,9 @@ One Docker image with four jobs, selected by a command-line flag:
 
 | Flag | What it does | Where it runs |
 |---|---|---|
-| `--create-invoices` | Creates monthly QBO invoices from Robocorp usage (ClickUp rates, runtime reports to SharePoint) | AWS ECS Fargate, started on demand |
+| `--create-invoices` | Creates monthly QBO invoices from Robocorp usage (ClickUp rates, runtime reports to SharePoint) | AWS ECS Fargate, EventBridge Scheduler (4th of the month, 6 AM PT) |
 | `--github-digest` | Weekly summary of merged PRs, emailed and prepended to a ClickUp doc | AWS ECS Fargate, EventBridge Scheduler (Mondays 1 AM PT) |
-| `--sync-processes` | Syncs Robocorp processes/assistants to Azure SQL | Local Docker + Windows scheduled task (Azure SQL firewall allows only the local IP) |
+| `--sync-processes` | Syncs Robocorp processes/assistants to Azure SQL | AWS ECS Fargate, daily 4 AM PT, in the n8n VPC's private subnets (NAT IP 44.253.27.41 is on the Azure SQL firewall). Local Windows task until cutover. |
 | `--send-invoices` | Sends today's QBO invoices, emails summary | Local Docker + Windows scheduled task; **deprecated**, retiring end of Sept 2026 |
 
 ## Common Commands
@@ -30,9 +30,19 @@ The `run-*.ps1` scripts in the repo root wrap these for Windows Task Scheduler a
 aws sso login
 .\deploy.ps1                                                   # terraform apply, then docker build + push the image it expects
 .\run-aws-task.ps1 -Job create-invoices -DryRun               # forces CREATE_INVOICE/UPDATE_CLICKUP/UPLOAD_TO_SHAREPOINT=false
-.\run-aws-task.ps1 -Job create-invoices -BillingReferenceDate 2026-10-01
+.\run-aws-task.ps1 -Job create-invoices -LowerClientId 10018   # finish a crashed run from the first client without an invoice
 .\run-aws-task.ps1 -Job github-digest
+.\run-aws-task.ps1 -Job sync-processes                        # runs in the n8n VPC's private subnets
 ```
+
+## Documentation
+
+- `README.md` — overview, where each job runs, monthly billing cadence
+- `AWS-DEPLOYMENT.md` — deploy/run/monitor/recover on AWS
+- `send_qbo_invoices/README.md` — local Docker, every env var, secret JSON layouts, code map, tests
+- `infra/README.md` — what each Terraform file creates
+
+Keep these in sync when changing jobs, env vars, secrets, schedules, or scripts.
 
 ## Project Structure
 

@@ -3,16 +3,35 @@ resource "aws_scheduler_schedule_group" "main" {
 }
 
 locals {
+  public_network = {
+    subnets          = aws_subnet.public[*].id
+    security_groups  = [aws_security_group.task.id]
+    assign_public_ip = true
+  }
+  sync_network = {
+    subnets          = var.sync_subnet_ids
+    security_groups  = [aws_security_group.sync.id]
+    assign_public_ip = false
+  }
+
   jobs = {
     github-digest = {
       command    = "--github-digest"
       expression = var.github_digest_schedule
       enabled    = var.github_digest_schedule_enabled
+      network    = local.public_network
     }
     create-invoices = {
       command    = "--create-invoices"
       expression = var.create_invoices_schedule
       enabled    = var.create_invoices_schedule_enabled
+      network    = local.public_network
+    }
+    sync-processes = {
+      command    = "--sync-processes"
+      expression = var.sync_processes_schedule
+      enabled    = var.sync_processes_schedule_enabled
+      network    = local.sync_network
     }
   }
 }
@@ -40,9 +59,9 @@ resource "aws_scheduler_schedule" "job" {
       launch_type         = "FARGATE"
 
       network_configuration {
-        subnets          = aws_subnet.public[*].id
-        security_groups  = [aws_security_group.task.id]
-        assign_public_ip = true
+        subnets          = each.value.network.subnets
+        security_groups  = each.value.network.security_groups
+        assign_public_ip = each.value.network.assign_public_ip
       }
     }
 

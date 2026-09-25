@@ -2,20 +2,28 @@
 #
 # Examples:
 #   .\run-aws-task.ps1 -Job github-digest
+#   .\run-aws-task.ps1 -Job sync-processes
 #   .\run-aws-task.ps1 -Job create-invoices -DryRun
 #   .\run-aws-task.ps1 -Job create-invoices -BillingReferenceDate 2026-10-01
+#   .\run-aws-task.ps1 -Job create-invoices -LowerClientId 10018
 #
 # -DryRun forces CREATE_INVOICE, UPDATE_CLICKUP and UPLOAD_TO_SHAREPOINT to false for this run only.
+# -LowerClientId starts at that client number (inclusive), skipping clients below it. Use it to finish
+#   a run that failed partway: pass the first client that did NOT get an invoice, so the clients that
+#   already have one aren't invoiced twice.
 # Requires: AWS CLI logged in (aws sso login) and Terraform state in .\infra.
 
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("create-invoices", "github-digest")]
+    [ValidateSet("create-invoices", "github-digest", "sync-processes")]
     [string]$Job,
 
     [switch]$DryRun,
 
     [string]$BillingReferenceDate,
+
+    [ValidateRange(10000, 99999)]
+    [int]$LowerClientId,
 
     [switch]$NoFollow
 )
@@ -35,6 +43,10 @@ if ($DryRun) {
 if ($BillingReferenceDate) {
     $Environment += @{ name = "BILLING_REFERENCE_DATE"; value = $BillingReferenceDate }
 }
+if ($LowerClientId) {
+    if ($Job -ne "create-invoices") { throw "-LowerClientId only applies to create-invoices" }
+    $Environment += @{ name = "LOWER_CLIENT_ID"; value = "$LowerClientId" }
+}
 
 $ContainerOverride = @{ name = $Config.container_name; command = @("--$Job") }
 if ($Environment.Count -gt 0) { $ContainerOverride.environment = $Environment }
@@ -43,10 +55,15 @@ $OverridesFile = New-TemporaryFile
 $NetworkFile = New-TemporaryFile
 try {
     @{ containerOverrides = @($ContainerOverride) } | ConvertTo-Json -Depth 5 | Set-Content -Path $OverridesFile -Encoding ascii
-    @{ awsvpcConfiguration = @{ subnets = @($Config.subnets); securityGroups = @($Config.security_group); assignPublicIp = "ENABLED" } } |
-        ConvertTo-Json -Depth 5 | Set-Content -Path $NetworkFile -Encoding ascii
+    # sync-processes runs in the n8n VPC's private subnets (NAT IP allowed by the Azure SQL firewall)
+    if ($Job -eq "sync-processes") {
+        $Network = @{ subnets = @($Config.sync_subnets); securityGroups = @($Config.sync_security_group); assignPublicIp = "DISABLED" }
+    } else {
+        $Network = @{ subnets = @($Config.subnets); securityGroups = @($Config.security_group); assignPublicIp = "ENABLED" }
+    }
+    @{ awsvpcConfiguration = $Network } | ConvertTo-Json -Depth 5 | Set-Content -Path $NetworkFile -Encoding ascii
 
-    Write-Host "Starting $Job$(if ($DryRun) { ' (dry run)' })..."
+    Write-Host "Starting $Job$(if ($DryRun) { ' (dry run)' })$(if ($LowerClientId) { " from client $LowerClientId" })..."
     $TaskArn = aws ecs run-task `
         --region $Config.region `
         --cluster $Config.cluster `
