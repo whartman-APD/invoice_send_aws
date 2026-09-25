@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 import boto3
 import pyodbc
 import requests
+from mypy_boto3_secretsmanager import SecretsManagerClient
 
 import apd_common
 
@@ -21,16 +22,16 @@ def sync_robocorp_processes_to_sql() -> bool:
     )
     logging.info("Starting Robocorp process sync to Azure SQL...")
 
+    aws_region = os.environ.get("AWS_REGION", "us-west-2")
+    aws_secretsmanager = boto3.client("secretsmanager", region_name=aws_region)
+
     try:
-        sql_config = _get_sql_config()
-    except ValueError as e:
+        sql_config = _get_sql_config(aws_secretsmanager)
+    except Exception as e:
         logging.error(f"Configuration error: {e}")
         return False
 
-    aws_region = os.environ.get("AWS_REGION", "us-west-2")
-
     try:
-        aws_secretsmanager = boto3.client("secretsmanager", region_name=aws_region)
         aws_dynamodb = boto3.resource('dynamodb', region_name=aws_region)
         robocorp_vault = apd_common.get_secrets("ROBOCORP_API_SECRET_NAME", aws_secretsmanager)
         client_orgs_table = apd_common.get_dynamodb_table("DYNAMODB_TABLE_ROBOCORP_CLIENTS", aws_dynamodb)
@@ -82,28 +83,22 @@ def sync_robocorp_processes_to_sql() -> bool:
     return error_count == 0
 
 
-def _get_sql_config() -> dict[str, str]:
-    """Retrieve Azure SQL configuration from environment variables."""
-    required_vars = [
+def _get_sql_config(aws_secretsmanager: SecretsManagerClient) -> dict[str, str]:
+    """Retrieve Azure SQL configuration from the AWS Secrets Manager secret named by AZURE_SQL_SECRET_NAME."""
+    required_keys = [
         "AZURE_SQL_SERVER",
         "AZURE_SQL_DATABASE",
         "AZURE_SQL_USERNAME",
         "AZURE_SQL_PASSWORD",
     ]
 
-    config = {}
-    missing = []
-    for var in required_vars:
-        value = os.environ.get(var)
-        if not value:
-            missing.append(var)
-        else:
-            config[var] = value
+    sql_vault = apd_common.get_secrets("AZURE_SQL_SECRET_NAME", aws_secretsmanager)
 
+    missing = [key for key in required_keys if not sql_vault.get(key)]
     if missing:
-        raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+        raise ValueError(f"Missing required keys in Azure SQL secret: {', '.join(missing)}")
 
-    return config
+    return {key: sql_vault[key] for key in required_keys}
 
 
 def _connect_to_azure_sql(config: dict[str, str]) -> pyodbc.Connection:

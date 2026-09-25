@@ -1,3 +1,20 @@
+locals {
+  # Hash of everything that goes into the image. Used as the image tag so every code change
+  # produces a new tag, a new task definition revision, and an easy rollback target.
+  source_files = concat(
+    ["Dockerfile", "requirements.txt", "entrypoint.py"],
+    [for f in fileset("${var.docker_context_path}/shared", "**/*.py") : "shared/${f}"],
+    [for f in fileset("${var.docker_context_path}/assets", "**") : "assets/${f}"],
+  )
+  source_hash = sha256(join("", [
+    for f in local.source_files : filemd5("${var.docker_context_path}/${f}")
+  ]))
+  image_tag = var.image_tag != "" ? var.image_tag : substr(local.source_hash, 0, 12)
+
+  # Built and pushed by ../deploy.ps1 (ECS only pulls it when a task starts)
+  image_uri = "${aws_ecr_repository.invoice_send.repository_url}:${local.image_tag}"
+}
+
 # Create ECR repository
 resource "aws_ecr_repository" "invoice_send" {
   name                 = var.repository_name
@@ -12,9 +29,9 @@ resource "aws_ecr_repository" "invoice_send" {
   }
 
   tags = {
-    Name        = var.repository_name
-    ManagedBy   = "Terraform"
-    Project     = "InvoiceSendQBO"
+    Name      = var.repository_name
+    ManagedBy = "Terraform"
+    Project   = "InvoiceSendQBO"
   }
 }
 
@@ -28,9 +45,9 @@ resource "aws_ecr_lifecycle_policy" "invoice_send_policy" {
         rulePriority = 1
         description  = "Keep last ${var.image_retention_count} images"
         selection = {
-          tagStatus     = "any"
-          countType     = "imageCountMoreThan"
-          countNumber   = var.image_retention_count
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = var.image_retention_count
         }
         action = {
           type = "expire"
@@ -38,34 +55,4 @@ resource "aws_ecr_lifecycle_policy" "invoice_send_policy" {
       }
     ]
   })
-}
-
-# Build and push Docker image
-resource "docker_image" "invoice_send" {
-  name = "${aws_ecr_repository.invoice_send.repository_url}:${var.image_tag}"
-
-  build {
-    context    = var.docker_context_path
-    dockerfile = "Dockerfile"
-    platform   = "linux/amd64"
-  }
-
-  triggers = {
-    # Rebuild when Dockerfile or source code changes
-    dockerfile_hash = filemd5("${var.docker_context_path}/Dockerfile")
-    requirements_hash = filemd5("${var.docker_context_path}/requirements.txt")
-    entrypoint_hash = filemd5("${var.docker_context_path}/entrypoint.py")
-    # Add hash of shared directory to trigger rebuilds on code changes
-    shared_dir_hash = sha256(join("", [
-      for f in fileset("${var.docker_context_path}/shared", "**/*.py") :
-      filemd5("${var.docker_context_path}/shared/${f}")
-    ]))
-  }
-}
-
-# Push image to ECR
-resource "docker_registry_image" "invoice_send" {
-  name = docker_image.invoice_send.name
-
-  keep_remotely = true # Keep image in registry when destroying Terraform resources
 }

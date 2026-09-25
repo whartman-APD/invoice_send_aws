@@ -11,6 +11,8 @@ def get_secrets(secret_name_env: str, aws_secretsmanager: SecretsManagerClient) 
     secret_name = None
     try:
         secret_name = os.environ[secret_name_env]
+        if not secret_name:
+            raise KeyError(secret_name_env)
         logging.debug(f"Fetching secret: {secret_name}")
 
         secret_value = aws_secretsmanager.get_secret_value(SecretId=secret_name)

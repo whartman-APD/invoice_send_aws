@@ -218,6 +218,13 @@ def process_all_clients():
         logging.exception(f"Failed to prepare invoice run: {e}")
         errors.append({"Client #": "Run", "Error": str(e)})
 
+    # QuickBooksOnline instances refresh tokens into quickbooks_online_vault in place; write the latest back
+    try:
+        apd_common.update_secret("QBO_SECRET_NAME", quickbooks_online_vault, aws_secretsmanager)
+    except Exception as e:
+        logging.exception(f"Failed to save refreshed QBO tokens: {e}")
+        errors.append({"Client #": "Run", "Error": f"Failed to save refreshed QBO tokens: {e}"})
+
     email_sent = True
     if CREATE_INVOICE:
         try:

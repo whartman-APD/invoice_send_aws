@@ -3,14 +3,14 @@ output "ecr_repository_url" {
   value       = aws_ecr_repository.invoice_send.repository_url
 }
 
-output "ecr_repository_arn" {
-  description = "ARN of the ECR repository"
-  value       = aws_ecr_repository.invoice_send.arn
+output "image_tag" {
+  description = "Image tag the task definition expects (deploy.ps1 builds and pushes it)"
+  value       = local.image_tag
 }
 
 output "docker_image_uri" {
-  description = "Full URI of the pushed Docker image"
-  value       = "${aws_ecr_repository.invoice_send.repository_url}:${var.image_tag}"
+  description = "Full URI of the image the task definition runs"
+  value       = local.image_uri
 }
 
 output "aws_account_id" {
@@ -18,7 +18,24 @@ output "aws_account_id" {
   value       = data.aws_caller_identity.current.account_id
 }
 
-output "aws_region" {
-  description = "AWS Region"
-  value       = data.aws_region.current.name
+output "ecs_cluster_name" {
+  value = aws_ecs_cluster.main.name
+}
+
+output "log_group_name" {
+  value = aws_cloudwatch_log_group.app.name
+}
+
+# Values used by ../run-aws-task.ps1
+output "run_task_config" {
+  description = "Settings for starting a task by hand"
+  value = {
+    region          = var.aws_region
+    cluster         = aws_ecs_cluster.main.name
+    task_definition = aws_ecs_task_definition.app.family
+    container_name  = local.container_name
+    subnets         = aws_subnet.public[*].id
+    security_group  = aws_security_group.task.id
+    log_group       = aws_cloudwatch_log_group.app.name
+  }
 }
